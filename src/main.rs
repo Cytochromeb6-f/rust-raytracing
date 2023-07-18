@@ -1,8 +1,11 @@
 use std::io;
 use std::fmt;
-use std::ops::{Mul, Neg};
 
-extern crate png_encode_mini;
+
+
+
+use png_encode_mini;
+use space_alg;
 
 // use std::io::Cursor;
 // use image::io::Reader as ImageReader;
@@ -22,7 +25,6 @@ struct Monomial {
     p_y: Integer,
     p_z: Integer
 }
-
 impl Monomial {
     fn new(p_x: Integer, p_y: Integer, p_z: Integer) -> Monomial {
         Monomial {p_x: p_x, p_y: p_y, p_z: p_z}
@@ -63,115 +65,13 @@ impl fmt::Display for Monomial {
 }
 
 
-#[derive(PartialEq, Clone, Copy)]
-struct Multivector {
-    blades: [Float; 8]
-}
-impl Multivector {
-    fn new(blades: [Float; 8]) -> Multivector {
-        Multivector {blades: blades}
-    }    
-}
-impl Neg for Multivector {
-    type Output = Multivector;
 
-    fn neg(self) -> Multivector {
-        let a = self.blades;
-        let new_blades: [Float; 8] = [
-            -a[0], -a[1], -a[2], -a[3], -a[4], -a[5], -a[6], -a[7] 
-        ];
-        
-        Multivector::new(new_blades)
-    }
-}
-impl Mul for Multivector {
-    // Clifford product in R^{3,0}
-    type Output = Multivector;
-
-    fn mul(self, right: Multivector) -> Multivector {
-        let a = self.blades;
-        let b = right.blades;
-
-        // This is from the multiplication table
-        let ab: [Float; 8] = [
-            a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3] - a[4]*b[4] - a[5]*b[5] - a[6]*b[6] - a[7]*b[7],
-            a[1]*b[0] + a[0]*b[1] + a[4]*b[2] - a[2]*b[4] + a[5]*b[3] - a[3]*b[5] - a[7]*b[6] - a[6]*b[7],
-            a[2]*b[0] + a[0]*b[2] - a[4]*b[1] + a[1]*b[4] + a[6]*b[3] - a[3]*b[6] + a[7]*b[5] + a[5]*b[7],
-            a[3]*b[0] + a[0]*b[3] - a[5]*b[1] + a[1]*b[5] - a[6]*b[2] + a[2]*b[6] - a[7]*b[4] - a[4]*b[7],
-            a[4]*b[0] + a[0]*b[4] - a[2]*b[1] + a[1]*b[2] + a[7]*b[3] + a[3]*b[7] + a[6]*b[5] - a[5]*b[6],
-            a[5]*b[0] + a[0]*b[5] - a[3]*b[1] + a[1]*b[3] - a[7]*b[2] - a[2]*b[7] - a[6]*b[4] + a[4]*b[6],
-            a[6]*b[0] + a[0]*b[6] + a[7]*b[1] + a[1]*b[7] - a[3]*b[2] + a[2]*b[3] + a[5]*b[4] - a[4]*b[5],
-            a[7]*b[0] + a[0]*b[7] + a[6]*b[1] + a[1]*b[6] - a[5]*b[2] - a[2]*b[5] + a[4]*b[3] + a[3]*b[4]
-        ];
-        
-        Multivector::new(ab)
-    }
-}
-
-impl fmt::Display for Multivector {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        
-        let blade_nms: [&str; 8] = ["", "e_x", "e_y","e_z", "e_xe_y", "e_xe_z", "e_ye_z", "e_xe_ye_z"];
-
-        let mut is_zero = true;
-
-        let mut output: String = String::from("");
-
-        let coeff = self.blades[0];
-
-        if coeff != 0. {
-            output = format!("{}{}", output, coeff);
-            is_zero = false
-        }
-
-        for i in 1..=7 {
-            let coeff = self.blades[i];
-            let blade = blade_nms[i];
-            
-            if coeff == 0. {
-                continue;
-            } else if is_zero {
-                
-                // If the first term isn't constant
-                if coeff == -1. {
-                    output = format!("{}-{}", output, blade);
-                } else if coeff == 1. {
-                    output = format!("{}{}", output, blade);
-                }
-                is_zero = false
-            } else {
-            
-                // Subsequent terms
-                if coeff < 0. {
-                    if coeff == -1. {
-                        output = format!("{} - {}", output, blade);
-                    } else {
-                        output = format!("{} - {}{}", output, -coeff, blade);
-                    }
-                } else if coeff > 0. {
-                    if coeff == 1. {
-                        output = format!("{} + {}", output, blade);
-                    } else {
-                        output = format!("{} + {}{}", output, coeff, blade);
-                    }
-                } 
-            }
-        }
-        if is_zero {
-            output = 0.to_string()
-        }
-
-        write!(f, "{output}")
-            
-    }
-}
 
 
 #[derive(PartialEq)]
 struct Polynomial {
     terms: Vec<(Float, Monomial)>
 }
-
 impl Polynomial {
     fn new(terms: Vec<(Float, Monomial)>) -> Polynomial {
         let mut non_zero: Vec<(Float, Monomial)> = Vec::new();
@@ -286,16 +186,55 @@ impl Surface {
         -normal*velocity*normal
     }
 }
-fn get_sc_field() -> Vec<char> {
-    let mut input_str: String = String::new();
-    io::stdin()
-        .read_line(&mut input_str)
-        .expect("F");
+// fn get_sc_field() -> Vec<char> {
+//     let mut input_str: String = String::new();
+//     io::stdin()
+//         .read_line(&mut input_str)
+//         .expect("F");
+//     input_str.chars()
+//         .collect()
+// }
 
-    input_str.chars()
-        .collect()
+struct Pixel {
+    position: Multivector,
+    ray_velocity: Multivector,
+    r: Float,
+    g: Float,
+    b: Float
 }
 
+struct Camera {
+    focal_point: Multivector,
+    pixel_array: Vec<Pixel>
+}
+impl Camera {
+    fn new(focal_point: [Float; 3], screen_center: [Float; 3], pixel_w: u16, pixel_h: u16, 
+        pixel_spacing: Float, roll_angle: Float) -> Camera {
+
+        let mut pixel_array: Vec<Pixel> = Vec::new();
+        let focal_point: Multivector = Multivector::new_grade1(focal_point);
+        let screen_center: Multivector = Multivector::new_grade1(screen_center);
+        
+        //Construct the screen geometry
+
+
+        // Populate the screen with pixels
+        for i in 1..=pixel_h {
+            for j in 1..=pixel_w {
+                i-(pixel_w+1)/2
+                
+            }
+        }
+
+        Camera {focal_point: focal_point, pixel_array: pixel_array}
+    }
+}
+
+struct Scene {
+    surfaces: Vec<Surface>,
+    lights: Vec<Surface>,
+    camera: Camera
+}
 
 fn poly_testing() {
     let a = Monomial::new(0,0,0);

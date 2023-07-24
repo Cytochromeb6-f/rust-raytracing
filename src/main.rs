@@ -4,7 +4,7 @@ use rand::random;
 
 use png_encode_mini;
 
-use space_alg::{Multivector, E_X, E_Y, ZERO};
+use space_alg::{Multivector, E_X, E_Y};
 
 // use std::io::Cursor;
 // use image::io::Reader as ImageReader;
@@ -194,7 +194,39 @@ impl Solid {
 
         Solid::new(surface, center)
     }
+    fn new_heart(origin: [Float;3]) -> Solid {
+        let x6 = Monomial::new(6,0,0);
+        let x4y2 = Monomial::new(4,2,0);
+        let x4z2 = Monomial::new(4,0,2);
+        let x4 = Monomial::new(4,0,0);
+        let x2y4 = Monomial::new(2,4,0);
+        let x2y2z2 = Monomial::new(2,2,2);
+        let x2y2 = Monomial::new(2,2,0);
+        let x2z4 = Monomial::new(2,0,4);
+        let x2z3 = Monomial::new(2,0,3);
+        let x2z2 = Monomial::new(2,0,2);
+        let x2 = Monomial::new(2,0,0);
+        let y6 = Monomial::new(0,6,0);
+        let y4z2 = Monomial::new(0,4,2);
+        let y4 = Monomial::new(0,4,0);
+        let y2z4 = Monomial::new(0,2,4);
+        let y2z3 = Monomial::new(0,2,3);
+        let y2z2 = Monomial::new(0,2,2);
+        let y2 = Monomial::new(0,2,0);
+        let z6 = Monomial::new(0,0,6);
+        let z4 = Monomial::new(0,0,4);
+        let z2 = Monomial::new(0,0,2);
 
+        let c = Monomial::new(0,0,0);
+
+        let surface = Polynomial::new(vec![
+            (1., x6), (6.75, x4y2), (3., x4z2), (-3., x4), (15.1875, x2y4), (13.5, x2y2z2), (-13.5, x2y2), 
+            (3., x2z4), (-1., x2z3), (-6., x2z2), (3., x2), (11.3906, y6), (15.1875, y4z2), (-15.1875, y4), 
+            (6.75, y2z4), (-0.1125, y2z3), (-13.5, y2z2), (6.75, y2), (1., z6), (-3., z4), (3., z2), (-1., c)
+        ]);
+
+        Solid::new(surface, origin)
+    }
     fn is_inside(&self, pos: Multivector) -> bool {
 
         let x = pos.comps()[1] - self.origin[0];
@@ -251,20 +283,21 @@ impl Solid {
 //         .collect()
 // }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Pixel {
-    position: Multivector,
-    ray_velocity: Multivector,
+    ray_pos: Vec<Multivector>,
+    ray_vel: Vec<Multivector>,
     r: u32,                     // Index of this pixels red-value in the image
     g: u32,                     // etc.
     b: u32
 }
 impl Pixel {
-    fn new(position: Multivector, ray_velocity: Multivector, r:u32, g:u32, b:u32) -> Pixel {
-        Pixel {position, ray_velocity, r, g, b}
+    fn new(ray_pos: Vec<Multivector>, ray_vel: Vec<Multivector>, r:u32, g:u32, b:u32) -> Pixel {
+        Pixel {ray_pos, ray_vel, r, g, b}
     }
 }
 
+#[allow(dead_code)]
 struct Camera {
     focal_point: Multivector,
     im_w: u32,
@@ -274,7 +307,9 @@ struct Camera {
 
 }
 impl Camera {
-    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, pix_size: Float) -> Camera {
+    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, 
+        pix_size: Float, pix_w: u8
+    ) -> Camera {
 
         let mut pixels: Vec<Pixel> = Vec::new();
         let mut image: Vec<Float> = Vec::new();
@@ -290,20 +325,35 @@ impl Camera {
         let horizontal_plane = e_w^camera_direction;              // Bivector plane
         let e_h = -horizontal_plane.complement().unit_vector();   // Unit vector in the screens height-direction
 
+        let sub_pix_size = pix_size/(pix_w as Float);
+
         // Populate the screen with pixels
         for i in 0..im_h {
-            let h_disp = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
+            let y_pix = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
             
             for j in 0..im_w {
-                let w_disp = pix_size*((j as Float) - 0.5*(im_w-1) as Float);
+                let x_pix = pix_size*((j as Float) - 0.5*(im_w-1) as Float);
 
-                let position = screen_center + e_w.scaled(w_disp) + e_h.scaled(h_disp);
-                let ray_velocity = (position - focal_point).unit_vector();
-
-                let r_index = 4*(im_w*i + j);
-                
-                pixels.push(Pixel::new(position, ray_velocity, r_index, r_index+1, r_index+2));
+                let r_index = 4*(im_w*i + j);   // Index of this pixels red-channel in the image
                 image.append(&mut vec![0., 0., 0., 255.]);          // Black non-transparent starting image
+                
+                let mut ray_pos = Vec::new();
+                let mut ray_vel = Vec::new();
+                // Populate the pixels with start sites for rays
+                for k in 0..pix_w {
+                    let y = y_pix + sub_pix_size*((k as Float) - 0.5*(pix_w-1) as Float);
+                    
+                    for l in 0..pix_w {     // Pixels are squares so pix_h==pix_w
+                        let x = x_pix + sub_pix_size*((l as Float) - 0.5*(pix_w-1) as Float);
+                        
+                        let position = screen_center + e_w.scaled(x) + e_h.scaled(y);
+
+                        ray_pos.push(position);
+                        ray_vel.push((position - focal_point).unit_vector())
+                    }
+                }
+
+                pixels.push(Pixel::new(ray_pos, ray_vel, r_index, r_index+1, r_index+2));
             }
         }
 
@@ -349,20 +399,25 @@ impl Scene {
         self.solids.push(solid);
     }
 
-    fn run(&mut self, time_step: Float, duration: Float, ray_per_pixel: u8) {
+    fn run(&mut self, time_step: Float, duration: Float, rays_per_sub_pixel: u8) {
         let now = Instant::now();          // Start of timed section
         // Create rays
         let mut rays: Vec<(&Pixel, Multivector, Multivector)> = Vec::new();
         for pix in &self.camera.pixels {
-            for _ in 0..ray_per_pixel {
-                rays.push((pix, pix.position.to_owned(), pix.ray_velocity.to_owned()));
+            // Pixel grid
+            for (pos, vel) in std::iter::zip(&pix.ray_pos, &pix.ray_vel) {
+                // Sub-pixel grid
+                for _ in 0..rays_per_sub_pixel {
+                    //
+                    rays.push((pix, pos.to_owned(), vel.to_owned()));
+                }
             }
             
         }
         let mut absorbed = Vec::new();
 
         let elapsed_time = now.elapsed(); // End of timed section
-        println!("Rays created in {} seconds." , elapsed_time.as_secs_f32());
+        println!("{} rays created in {} seconds." , rays.len(), elapsed_time.as_secs_f32());
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
@@ -377,7 +432,7 @@ impl Scene {
                     if light.is_inside(rays[i].1) {
                         self.camera.image[rays[i].0.r as usize] += 10.;
                         self.camera.image[rays[i].0.g as usize] += 5.;
-                        self.camera.image[rays[i].0.b as usize] += 50.;
+                        self.camera.image[rays[i].0.b as usize] += 40.;
 
                         // Mark for deletion
                         absorbed.push(i);
@@ -417,6 +472,7 @@ impl Scene {
     }
 }
 
+#[allow(dead_code)]
 fn poly_testing() {
     let a = Monomial::new(0,0,0);
     let b = Monomial::new(1,0,0);
@@ -424,7 +480,7 @@ fn poly_testing() {
     let d = Monomial::new(1,0,3);
     let e = Monomial::new(1,2,0);
 
-    let p = Polynomial::new(vec![(-1., b), (-2.3, b), (0., c), (-1., d), (1., e)]);
+    let p = Polynomial::new(vec![(-1., a), (-2.3, b), (0., c), (-1., d), (1., e)]);
 
     // println!("{}",a.eval(2.,2.,2.));
     // println!("{}",b);
@@ -434,7 +490,7 @@ fn poly_testing() {
     println!("d/dy: {}",p.derivative('y'));
     println!("d/dz: {}",p.derivative('z'));
 }
-
+#[allow(dead_code)]
 fn png_testing() {
 
     let mut f = std::fs::File::create("png_test.png").unwrap();
@@ -471,9 +527,11 @@ fn png_testing() {
     }
     
 }
-
+#[allow(dead_code)]
 fn screen_testing() {
-    let mut camera = Camera::new([0., 0., 0.], [1., 0., 0.], 128, 128, 1e-2);
+    let mut camera = Camera::new([0., 0., 0.], [1., 0., 0.],
+        128, 128, 1e-2, 2
+    );
     let mut blue = 0.;
     for pix in &camera.pixels {
         camera.image[pix.b as usize] = blue;
@@ -483,6 +541,7 @@ fn screen_testing() {
 
 }
 
+#[allow(dead_code)]
 fn diffuse_testing() {
     let rep = 4_000_000 ;
 
@@ -518,7 +577,7 @@ fn diffuse_testing() {
         
 
         // Get the velocity by rotating the normal and scaling it to unit length to set speed to 1
-        let out = unit_normal.scaled(r.cos()) + (unit_normal<<(unit_normal^rand_vect)).scaled(r.sin());
+        let _out = unit_normal.scaled(r.cos()) + (unit_normal<<(unit_normal^rand_vect)).scaled(r.sin());
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 1 took {} seconds." , elapsed_time.as_secs_f32());
@@ -540,7 +599,7 @@ fn diffuse_testing() {
         
         
         // Get the velocity by rotating the normal and scaling it to unit length to set speed to 1
-        let out = (normal[i].scaled(r.cos()) + normal[i]<<rot_plane).scaled(r.sin()).unit_vector();
+        let _out = (normal[i].scaled(r.cos()) + normal[i]<<rot_plane).scaled(r.sin()).unit_vector();
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 2 took {} seconds." , elapsed_time.as_secs_f32());
@@ -560,7 +619,7 @@ fn diffuse_testing() {
         let horizontal_plane = unit_normal.complement();
         let phi = random::<Float>()*TAU;    // Horizontal rotation angle from unifrom distribution
         
-        let out = vel1.scaled(phi.cos()) + (vel1<<horizontal_plane).scaled(phi.sin());
+        let _out = vel1.scaled(phi.cos()) + (vel1<<horizontal_plane).scaled(phi.sin());
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 3 took {} seconds." , elapsed_time.as_secs_f32());
@@ -580,40 +639,101 @@ fn diffuse_testing() {
         let horizontal_plane = vel.complement();
         let phi = random::<Float>()*TAU;    // Horizontal rotation angle from unifrom distribution
         
-        vel = vel.scaled(phi.cos()) + (vel<<horizontal_plane).scaled(phi.sin());
+        let _out = vel.scaled(phi.cos()) + (vel<<horizontal_plane).scaled(phi.sin());
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 4 took {} seconds." , elapsed_time.as_secs_f32());
 }
-
+#[allow(dead_code)]
 fn transport_testing() {
-    let focal_point = [-1., 0., 0.];
+    let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
-    let im_w = 256;
-    let im_h =  256;
+
     let pixel_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let im_h =  128;
+    let pix_w = 3;
+    let rays_per_sub_pixel = 1;
 
     
-    let duration = 10.;
-    let time_step = 0.1;
-    let ray_per_pixel = 2;
+    let duration = 20.;
+    let time_step = 0.2;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size);
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
     let mut scene = Scene::new(camera);
     
-    scene.add_light(Solid::new_sphere([3., 1.2, 0.5], 1.));
+    scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
     scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
 
 
-    scene.add_solid(Solid::new_sphere([3., -1.5, 0.], 1.));
+    scene.add_solid(Solid::new_sphere([3., -1.2, 0.], 1.));
     scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.]));
-    scene.add_solid(Solid::new_wall([0., 0., 2.], [0., 0., -1.]));
+    scene.add_solid(Solid::new_wall([0., 0., 1.5], [0., 0., -1.]));
     scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
-    scene.run(time_step, duration, ray_per_pixel);
+    scene.run(time_step, duration, rays_per_sub_pixel);
 
     scene.camera.photo("transport_test");
+}
+
+fn time_testing() {
+    let focal_point = [0., -0.9, 0.];
+    let screen_center = [0., 0., 0.];
+
+    let pixel_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let im_h =  128;
+    let pix_w = 2;
+    let rays_per_sub_pixel = 3;
+
+    
+    let duration = 10.;
+    let time_step = 0.5;
+
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let mut scene = Scene::new(camera);
+    
+    for i in 0..10 {
+        scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
+        // scene.add_solid(Solid::new_sphere([-3.-(i as Float), 0.,0.], 1.))
+        // scene.add_solid(Solid::new_heart([-3.-(i as Float), 0.,0.]))
+    }
+    // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
+    // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
+
+    scene.run(time_step, duration, rays_per_sub_pixel);
+
+    scene.camera.photo("time_test");
+}
+
+#[allow(dead_code)]
+fn scene_testing() {
+    let focal_point = [0., -0.9, 0.];
+    let screen_center = [0., 0., 0.];
+
+    let pixel_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let im_h =  128;
+    let pix_w = 6;
+    let rays_per_sub_pixel = 2;
+
+    
+    let duration = 80.;
+    let time_step = 0.2;
+
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let mut scene = Scene::new(camera);
+    
+    scene.add_solid(Solid::new_wall([0., 0., -1.],[0., 0., 1.]));
+    
+    // scene.add_solid(Solid::new_heart([0., 3., -0.1]));
+    // scene.add_light(Solid::new_sphere([3., 1.2, 6.], 4.));
+    // scene.add_light(Solid::new_sphere([6., 0., 6.], 4.));
+    
+    scene.run(time_step, duration, rays_per_sub_pixel);
+
+    scene.camera.photo("scene_test");
 }
 
 fn main() {
@@ -624,8 +744,9 @@ fn main() {
     // png_testing();
     // screen_testing();
     // diffuse_testing();
-    transport_testing();
-
+    // transport_testing();
+    // time_testing();
+    scene_testing();
     
 
     

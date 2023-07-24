@@ -158,19 +158,20 @@ struct Solid {
     // A solid which has a surface given by the zero set of a polynomial. The interior is where the polynomial is negative.
     surface: Polynomial,
     gradient: [Polynomial; 3],
-    origin: [Float; 3]
+    origin: [Float; 3],
+    bounding_box: [Float; 6]        // This is relative to the Solids own origin
 }
 
 #[allow(dead_code)]
 impl Solid {
-    fn new(surface: Polynomial, origin: [Float; 3]) -> Solid {
+    fn new(surface: Polynomial, origin: [Float; 3], bounding_box: [Float; 6]) -> Solid {
         let gradient: [Polynomial; 3] = [surface.derivative('x'),
                                          surface.derivative('y'), 
                                          surface.derivative('z')];
-        Solid {surface, gradient, origin}
+        Solid {surface, gradient, origin, bounding_box}
     }
 
-    fn new_wall(point: [Float; 3], normal: [Float; 3]) -> Solid {
+    fn new_wall(point: [Float; 3], normal: [Float; 3], bounding_box: [Float; 6]) -> Solid {
         // A half-space with a surface plane that is coincident with a given point and has a given normal direction
 
         let x1 = Monomial::new(1,0,0);
@@ -179,11 +180,13 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(normal[0], x1), (normal[1], y1), (normal[2], z1)]);
 
-        Solid::new(surface, point)
+        Solid::new(surface, point, bounding_box)
     }
 
     fn new_sphere(center: [Float; 3], radius: Float) -> Solid {
         // A sphere with given a center and radius
+
+        let bounding_box = [-radius, radius, -radius, radius, -radius, radius];
 
         let x2 = Monomial::new(2,0,0);
         let y2 = Monomial::new(0,2,0);
@@ -192,9 +195,12 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(1., x2), (1., y2), (1., z2), (-radius.powi(2), c)]);
 
-        Solid::new(surface, center)
+        Solid::new(surface, center, bounding_box)
     }
     fn new_heart(origin: [Float;3]) -> Solid {
+
+        let bounding_box = [-0.7, 0.7, -1.2, 1.2, -1., 1.3];
+
         let x6 = Monomial::new(6,0,0);
         let x4y2 = Monomial::new(4,2,0);
         let x4z2 = Monomial::new(4,0,2);
@@ -216,24 +222,35 @@ impl Solid {
         let z6 = Monomial::new(0,0,6);
         let z4 = Monomial::new(0,0,4);
         let z2 = Monomial::new(0,0,2);
-
         let c = Monomial::new(0,0,0);
 
         let surface = Polynomial::new(vec![
-            (1., x6), (6.75, x4y2), (3., x4z2), (-3., x4), (15.1875, x2y4), (13.5, x2y2z2), (-13.5, x2y2), 
-            (3., x2z4), (-1., x2z3), (-6., x2z2), (3., x2), (11.3906, y6), (15.1875, y4z2), (-15.1875, y4), 
-            (6.75, y2z4), (-0.1125, y2z3), (-13.5, y2z2), (6.75, y2), (1., z6), (-3., z4), (3., z2), (-1., c)
+           (1., y6), (6.75, x2y4), (3., y4z2), (-3., y4), (15.1875, x4y2), (13.5, x2y2z2), (-13.5, x2y2), 
+            (3., y2z4), (-1., y2z3), (-6., y2z2), (3., y2), (11.3906, x6), (15.1875, x4z2), (-15.1875, x4), 
+            (6.75, x2z4), (-0.1125, x2z3), (-13.5, x2z2), (6.75, x2), (1., z6), (-3., z4), (3., z2), (-1., c)
         ]);
+        
+        // let surface = Polynomial::new(vec![
+        //     (1., x6), (6.75, x4y2), (3., x4z2), (-3., x4), (15.1875, x2y4), (13.5, x2y2z2), (-13.5, x2y2), 
+        //     (3., x2z4), (-1., x2z3), (-6., x2z2), (3., x2), (11.3906, y6), (15.1875, y4z2), (-15.1875, y4), 
+        //     (6.75, y2z4), (-0.1125, y2z3), (-13.5, y2z2), (6.75, y2), (1., z6), (-3., z4), (3., z2), (-1., c)
+        // ]);
 
-        Solid::new(surface, origin)
+        Solid::new(surface, origin, bounding_box)
     }
+    
     fn is_inside(&self, pos: Multivector) -> bool {
 
         let x = pos.comps()[1] - self.origin[0];
         let y = pos.comps()[2] - self.origin[1];
         let z = pos.comps()[3] - self.origin[2];
-        
-        self.surface.eval(x,y,z) <= 0.
+
+        match (x,y,z) {
+            (x, _, _) if !(self.bounding_box[0]..self.bounding_box[1]).contains(&x) => false,
+            (_, y, _) if !(self.bounding_box[2]..self.bounding_box[3]).contains(&y) => false,
+            (_, _, z) if !(self.bounding_box[4]..self.bounding_box[5]).contains(&z) => false,
+            _ => self.surface.eval(x,y,z) <= 0.
+        }        
     }
 
     fn gradient_at(&self, pos: Multivector) -> Multivector {
@@ -283,6 +300,8 @@ impl Solid {
 //         .collect()
 // }
 
+
+
 #[derive(Clone)]
 struct Pixel {
     ray_pos: Vec<Multivector>,
@@ -311,11 +330,14 @@ impl Camera {
         pix_size: Float, pix_w: u8
     ) -> Camera {
 
+        let now = Instant::now();          // Start of timed section
+
         let mut pixels: Vec<Pixel> = Vec::new();
         let mut image: Vec<Float> = Vec::new();
 
         let focal_point: Multivector = Multivector::new_grade1(focal_point);
         let screen_center: Multivector = Multivector::new_grade1(screen_center);
+        let sub_pix_size = pix_size/(pix_w as Float);
         
         // Construct the screen geometry
         let camera_direction: Multivector = screen_center - focal_point;       // Vector in the direction of the camera
@@ -325,8 +347,7 @@ impl Camera {
         let horizontal_plane = e_w^camera_direction;              // Bivector plane
         let e_h = -horizontal_plane.complement().unit_vector();   // Unit vector in the screens height-direction
 
-        let sub_pix_size = pix_size/(pix_w as Float);
-
+        
         // Populate the screen with pixels
         for i in 0..im_h {
             let y_pix = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
@@ -356,7 +377,9 @@ impl Camera {
                 pixels.push(Pixel::new(ray_pos, ray_vel, r_index, r_index+1, r_index+2));
             }
         }
-
+        let elapsed_time = now.elapsed(); // End of timed section
+        println!("In {} seconds: camera with {} pixels created.", elapsed_time.as_secs_f32(), im_w*im_h);
+        
         Camera {focal_point, im_w, im_h, pixels, image}
     }
 
@@ -374,7 +397,7 @@ impl Camera {
         let elapsed_time = now.elapsed(); // End of timed section
 
         match result {
-            Ok(_) => println!("Image written to \"{name}.png\" in {} seconds." , elapsed_time.as_secs_f32()),
+            Ok(_) => println!("In {} seconds: image written to \"{name}.png\".", elapsed_time.as_secs_f32()),
             Err(e) => println!("Error {:?} after {} seconds.", e, elapsed_time.as_secs())
         }
 
@@ -383,21 +406,26 @@ impl Camera {
 
 struct Scene {
     solids: Vec<Solid>,
+    mirrors: Vec<Solid>,
     lights: Vec<Solid>,
     camera: Camera
 }
 impl Scene {
     fn new(camera: Camera) -> Scene {
-        Scene {solids: Vec::new(), lights: Vec::new(), camera}
+        Scene {solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), camera}
     }
 
+    fn add_solid(&mut self, solid: Solid) {
+        self.solids.push(solid);
+    }
+    fn add_mirror(&mut self, mirror: Solid) {
+        self.mirrors.push(mirror);
+    }
     fn add_light(&mut self, light: Solid) {
         self.lights.push(light);
     }
     
-    fn add_solid(&mut self, solid: Solid) {
-        self.solids.push(solid);
-    }
+    
 
     fn run(&mut self, time_step: Float, duration: Float, rays_per_sub_pixel: u8) {
         let now = Instant::now();          // Start of timed section
@@ -417,23 +445,22 @@ impl Scene {
         let mut absorbed = Vec::new();
 
         let elapsed_time = now.elapsed(); // End of timed section
-        println!("{} rays created in {} seconds." , rays.len(), elapsed_time.as_secs_f32());
+        println!("In {} seconds: {} rays produced.", elapsed_time.as_secs_f32(), rays.len());
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
         let mut t = 0.;
+
         while t < duration  {
-            
-            
             
             'ray_evolution: for i in 0..rays.len() {
                 // First test light hit
                 for light in &self.lights {
                     if light.is_inside(rays[i].1) {
-                        self.camera.image[rays[i].0.r as usize] += 10.;
-                        self.camera.image[rays[i].0.g as usize] += 5.;
-                        self.camera.image[rays[i].0.b as usize] += 40.;
-
+                        self.camera.image[rays[i].0.r as usize] += 3.;
+                        self.camera.image[rays[i].0.g as usize] += 1.5;
+                        self.camera.image[rays[i].0.b as usize] += 10.;
+                        
                         // Mark for deletion
                         absorbed.push(i);
 
@@ -442,13 +469,26 @@ impl Scene {
                     }
                 }
 
-                // Then test for surface reflection
-                for solid in &self.solids {
-                    if solid.is_inside(rays[i].1) {
-                        // rays[i].2 = solid.refl(rays[i].1, rays[i].2);
-                        rays[i].2 = solid.refl_diffuse(rays[i].1);
+                
+                'reflections: {
+                    // Then test for diffuse surface hit
+                    for solid in &self.solids {
+                        if solid.is_inside(rays[i].1) {
+                            rays[i].2 = solid.refl_diffuse(rays[i].1);
+                            
+                            // break 'reflections // Skip the other surfaces
+                        }
+                    }
+                    // Then test for mirror reflection
+                    for mirror in &self.mirrors {
+                        if mirror.is_inside(rays[i].1) {
+                            rays[i].2 = mirror.refl(rays[i].1, rays[i].2);
+                            
+                            break 'reflections // Skip the other mirrors
+                        }
                     }
                 }
+                
 
                 // Lastly move forward
                 let vel = rays[i].2;
@@ -468,7 +508,7 @@ impl Scene {
             t += time_step
         }
         let elapsed_time = now.elapsed(); // End of timed section
-        println!("Ray transport simulated in {} seconds." , elapsed_time.as_secs_f32());
+        println!("In {} seconds: ray transport simulated." , elapsed_time.as_secs_f32());
     }
 }
 
@@ -490,6 +530,7 @@ fn poly_testing() {
     println!("d/dy: {}",p.derivative('y'));
     println!("d/dz: {}",p.derivative('z'));
 }
+
 #[allow(dead_code)]
 fn png_testing() {
 
@@ -527,6 +568,7 @@ fn png_testing() {
     }
     
 }
+
 #[allow(dead_code)]
 fn screen_testing() {
     let mut camera = Camera::new([0., 0., 0.], [1., 0., 0.],
@@ -644,6 +686,7 @@ fn diffuse_testing() {
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 4 took {} seconds." , elapsed_time.as_secs_f32());
 }
+
 #[allow(dead_code)]
 fn transport_testing() {
     let focal_point = [-0.9, 0., 0.];
@@ -663,13 +706,13 @@ fn transport_testing() {
     let mut scene = Scene::new(camera);
     
     scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
-    scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
+    // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
 
 
-    scene.add_solid(Solid::new_sphere([3., -1.2, 0.], 1.));
-    scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.]));
-    scene.add_solid(Solid::new_wall([0., 0., 1.5], [0., 0., -1.]));
-    scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
+    // scene.add_solid(Solid::new_sphere([3., -1.2, 0.], 1.));
+    // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.]));
+    // scene.add_solid(Solid::new_wall([0., 0., 1.5], [0., 0., -1.]));
+    // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
     scene.run(time_step, duration, rays_per_sub_pixel);
@@ -677,15 +720,16 @@ fn transport_testing() {
     scene.camera.photo("transport_test");
 }
 
+#[allow(dead_code)]
 fn time_testing() {
-    let focal_point = [0., -0.9, 0.];
+    let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
 
     let pixel_size = 5e-3;
     let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  128;
     let pix_w = 2;
-    let rays_per_sub_pixel = 3;
+    let rays_per_sub_pixel = 1;
 
     
     let duration = 10.;
@@ -694,8 +738,10 @@ fn time_testing() {
     let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
     let mut scene = Scene::new(camera);
     
-    for i in 0..10 {
-        scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
+    scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
+
+    for _i in 0..10 {
+        // scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
         // scene.add_solid(Solid::new_sphere([-3.-(i as Float), 0.,0.], 1.))
         // scene.add_solid(Solid::new_heart([-3.-(i as Float), 0.,0.]))
     }
@@ -709,45 +755,77 @@ fn time_testing() {
 
 #[allow(dead_code)]
 fn scene_testing() {
-    let focal_point = [0., -0.9, 0.];
+    let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
 
     let pixel_size = 5e-3;
     let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  128;
-    let pix_w = 6;
-    let rays_per_sub_pixel = 2;
+    let pix_w = 2;
+    let rays_per_sub_pixel = 1;
 
     
-    let duration = 80.;
-    let time_step = 0.2;
+    let duration = 40.;
+    let time_step = 0.5;
 
     let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
     let mut scene = Scene::new(camera);
     
-    scene.add_solid(Solid::new_wall([0., 0., -1.],[0., 0., 1.]));
+    scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
     
-    // scene.add_solid(Solid::new_heart([0., 3., -0.1]));
-    // scene.add_light(Solid::new_sphere([3., 1.2, 6.], 4.));
-    // scene.add_light(Solid::new_sphere([6., 0., 6.], 4.));
+    scene.add_solid(Solid::new_heart([3., 0., -0.1]));
+    scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
+    // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
     
     scene.run(time_step, duration, rays_per_sub_pixel);
 
     scene.camera.photo("scene_test");
 }
 
-fn main() {
+#[allow(dead_code)]
+fn vertical() {
+    let focal_point = [-4., 0., 0.];
+    let screen_center = [-3., 0., 0.];
+
+    let pixel_size = 2e-3;
+    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let im_h =  1280;
+    let pix_w = 5;
+    let rays_per_sub_pixel = 1;
 
     
+    let duration = 50.;
+    let time_step = 0.05;
+
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let mut scene = Scene::new(camera);
     
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5.,-5.,5.,0.,2.]));
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2.,-5.,5.,-5.,5.]));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0.,-5.,5.,-5.,5.]));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5.,-2.,0.,-5.,5.]));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5.,0.,2.,-5.,5.]));
+    
+    scene.add_mirror(Solid::new_sphere([0., 0., 0.], 1.));
+    
+    scene.run(time_step, duration, rays_per_sub_pixel);
+
+    scene.camera.photo("vertical");
+}
+
+fn main() {
+    
+    
+
     // poly_testing();
     // png_testing();
     // screen_testing();
     // diffuse_testing();
     // transport_testing();
     // time_testing();
-    scene_testing();
-    
+    // scene_testing();
+    vertical();
 
     
 }

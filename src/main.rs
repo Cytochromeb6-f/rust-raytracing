@@ -155,19 +155,20 @@ struct Solid {
     surface: Polynomial,
     gradient: [Polynomial; 3],
     origin: [Float; 3],
-    bounding_box: [Float; 6]        // This is relative to the Solids own origin
+    b_box: [Float; 6],        // This is relative to the Solids own origin
+    color: [u8; 3]
 }
 
 #[allow(dead_code)]
 impl Solid {
-    fn new(surface: Polynomial, origin: [Float; 3], bounding_box: [Float; 6]) -> Solid {
+    fn new(surface: Polynomial, origin: [Float; 3], b_box: [Float; 6], color: [u8; 3]) -> Solid {
         let gradient: [Polynomial; 3] = [surface.derivative('x'),
                                          surface.derivative('y'), 
                                          surface.derivative('z')];
-        Solid {surface, gradient, origin, bounding_box}
+        Solid {surface, gradient, origin, b_box, color}
     }
 
-    fn new_wall(point: [Float; 3], normal: [Float; 3], bounding_box: [Float; 6]) -> Solid {
+    fn new_wall(point: [Float; 3], normal: [Float; 3], b_box: [Float; 6], color: [u8; 3]) -> Solid {
         // A half-space with a surface plane that is coincident with a given point and has a given normal direction
 
         let x1 = Monomial::new(1,0,0);
@@ -176,13 +177,13 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(normal[0], x1), (normal[1], y1), (normal[2], z1)]);
 
-        Solid::new(surface, point, bounding_box)
+        Solid::new(surface, point, b_box, color)
     }
 
-    fn new_sphere(center: [Float; 3], radius: Float) -> Solid {
+    fn new_sphere(center: [Float; 3], radius: Float, color: [u8; 3]) -> Solid {
         // A sphere with given a center and radius
 
-        let bounding_box = [-radius, radius, -radius, radius, -radius, radius];
+        let b_box = [-radius, radius, -radius, radius, -radius, radius];
 
         let x2 = Monomial::new(2,0,0);
         let y2 = Monomial::new(0,2,0);
@@ -191,11 +192,11 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(1., x2), (1., y2), (1., z2), (-radius.powi(2), c)]);
 
-        Solid::new(surface, center, bounding_box)
+        Solid::new(surface, center, b_box, color)
     }
-    fn new_heart(origin: [Float;3]) -> Solid {
+    fn new_heart(origin: [Float;3], color: [u8; 3]) -> Solid {
 
-        let bounding_box = [-0.7, 0.7, -1.2, 1.2, -1., 1.3];
+        let b_box = [-0.7, 0.7, -1.2, 1.2, -1., 1.3];
 
         let x6 = Monomial::new(6,0,0);
         let x4y2 = Monomial::new(4,2,0);
@@ -232,7 +233,7 @@ impl Solid {
         //     (6.75, y2z4), (-0.1125, y2z3), (-13.5, y2z2), (6.75, y2), (1., z6), (-3., z4), (3., z2), (-1., c)
         // ]);
 
-        Solid::new(surface, origin, bounding_box)
+        Solid::new(surface, origin, b_box, color)
     }
     
     fn is_inside(&self, pos: Multivector) -> bool {
@@ -242,9 +243,9 @@ impl Solid {
         let z = pos.comps()[3] - self.origin[2];
 
         match (x,y,z) {
-            (x, _, _) if !(self.bounding_box[0]..self.bounding_box[1]).contains(&x) => false,
-            (_, y, _) if !(self.bounding_box[2]..self.bounding_box[3]).contains(&y) => false,
-            (_, _, z) if !(self.bounding_box[4]..self.bounding_box[5]).contains(&z) => false,
+            (x, _, _) if !(self.b_box[0]..self.b_box[1]).contains(&x) => false,
+            (_, y, _) if !(self.b_box[2]..self.b_box[3]).contains(&y) => false,
+            (_, _, z) if !(self.b_box[4]..self.b_box[5]).contains(&z) => false,
             _ => self.surface.eval(x,y,z) <= 0.
         }        
     }
@@ -264,27 +265,27 @@ impl Solid {
     fn refl(&self, pos: Multivector, vel: Multivector) -> Multivector {
         let normal = self.gradient_at(pos);
 
-        -normal*vel*normal
+        -(normal*vel*normal).unit_vector()
     }
 
     fn refl_diffuse(&self, pos: Multivector) -> Multivector {    // Indepenent of incident velocity
-        // Start with the velocity as the unit normal at pos
-        let unit_normal = self.gradient_at(pos).unit_vector();
+        // Start with the velocity in the normal direction
+        let normal = self.gradient_at(pos);
 
-        // Rotate it down with a random angle given by Lambert's cosine law
-        let vertical_plane = (Self::BLIND_SPOT^unit_normal).unit_bivector();
-        let theta = random::<Float>().asin();
-        let vel1 = unit_normal.scaled(theta.cos()) + (unit_normal<<vertical_plane).scaled(theta.sin());
-
-        // Then rotate it by a random angle in the tangent plane of the surface
-        let horizontal_plane = unit_normal.complement();
-        let phi = random::<Float>()*TAU;    // Horizontal rotation angle from unifrom distribution
-        vel1.scaled(phi.cos()) + (vel1<<horizontal_plane).scaled(phi.sin())
-
-        // Will break if the normal is not linearly independent from BLIND_SPOT.
-        // This is a probability 0 event for reals and still extremely unlikely when using floats.
+        // Make a vector from a spherical distribution. It is used to get a random rotation direction
+        let theta = random::<Float>()*PI;
+        let phi = random::<Float>()*TAU;
+        let rand_vect = Multivector::new_grade1([phi.cos()*theta.sin(), phi.sin()*theta.sin(), theta.cos()]);
+        
+        // Make unit-bivector to rotate the normal along
+        let rot_plane = (normal^rand_vect).unit_bivector();
+        
+        // Rotation angle from Lambert's cosine law
+        let r = random::<Float>().asin();
+        
+        // Get the reflected velocity by rotating the normal and scaling it to unit length to set speed to 1
+        (normal.scaled(r.cos()) + (normal<<rot_plane).scaled(r.sin())).unit_vector()
     }
-    const BLIND_SPOT: Multivector = Multivector::new_grade1([0.157631487, -0.697615504, 0.698916971]);
 
 }
 // fn get_custom_solid() -> Vec<char> {
@@ -312,18 +313,47 @@ impl Pixel {
     }
 }
 
+
+#[derive(Clone, Copy)]
+struct Ray<'a> {
+    pixel: &'a Pixel,
+    pos: Multivector,
+    vel: Multivector,
+    color: [Float; 3],
+    rays_per_pixel: Float
+}
+impl Ray<'_>{
+    fn new(pixel: &Pixel, pos: Multivector, vel: Multivector, rays_per_pixel: u8) -> Ray {
+        Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float)}
+    }
+    fn color_absorption(&mut self, solid: &Solid) {
+        self.color[0] *= (solid.color[0] as Float)/256.;
+        self.color[1] *= (solid.color[1] as Float)/256.;
+        self.color[2] *= (solid.color[2] as Float)/256.;
+        
+    }
+    fn final_color(self, light_source: &Solid) -> [Float; 3] {
+        [
+            self.color[0]*(light_source.color[0] as Float)/self.rays_per_pixel,
+            self.color[1]*(light_source.color[1] as Float)/self.rays_per_pixel,
+            self.color[2]*(light_source.color[2] as Float)/self.rays_per_pixel
+        ]
+    }
+}
+
 #[allow(dead_code)]
 struct Camera {
     focal_point: Multivector,
     im_w: u32,
     im_h: u32,
     pixels: Vec<Pixel>,     // Array which holds the pixel objects
-    image: Vec<Float>       // The actual rgba-array
-
+    image: Vec<Float>,      // The actual rgba-array
+    rays_per_pixel: u8
 }
+
 impl Camera {
     fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, 
-        pix_size: Float, pix_w: u8
+        pix_size: Float, pix_w: u8, rays_per_sub_pixel: u8
     ) -> Camera {
 
         let now = Instant::now();          // Start of timed section
@@ -345,6 +375,8 @@ impl Camera {
 
         
         // Populate the screen with pixels
+        let rays_per_pixel = pix_w.pow(2)*rays_per_sub_pixel;
+
         for i in 0..im_h {
             let y_pix = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
             
@@ -364,9 +396,11 @@ impl Camera {
                         let x = x_pix + sub_pix_size*((l as Float) - 0.5*(pix_w-1) as Float);
                         
                         let position = screen_center + e_w.scaled(x) + e_h.scaled(y);
-
-                        ray_pos.push(position);
-                        ray_vel.push((position - focal_point).unit_vector())
+                        
+                        for _ in 0..rays_per_sub_pixel {
+                            ray_pos.push(position);
+                            ray_vel.push((position - focal_point).unit_vector())
+                        }
                     }
                 }
 
@@ -376,7 +410,7 @@ impl Camera {
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: camera with {} pixels created.", elapsed_time.as_secs_f32(), im_w*im_h);
         
-        Camera {focal_point, im_w, im_h, pixels, image}
+        Camera {focal_point, im_w, im_h, pixels, image, rays_per_pixel}
     }
 
     fn photo(self, name: &str) -> () {
@@ -404,11 +438,27 @@ struct Scene {
     solids: Vec<Solid>,
     mirrors: Vec<Solid>,
     lights: Vec<Solid>,
+    speed_zones: Vec<(Float, [Float; 6])>,  // The earliest will be used if two zones overlap
     camera: Camera
 }
 impl Scene {
     fn new(camera: Camera) -> Scene {
-        Scene {solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), camera}
+        Scene {solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), speed_zones: Vec::new(), camera}
+    }
+
+    fn add_speed_zone(&mut self, speed: Float, s_box: [Float; 6]) {
+        self.speed_zones.push((speed, s_box));
+
+        // Let u be the speed at the surface of a solid which gives the desired precision.
+        // A zone with speed v may then be safely placed at a distance s=v from the surface.
+
+        // The optimal value of v depends on the width of the zone L, and is given by 
+        // the geometric mean:          v = sqrt(u*L)
+        // If the zone is between two surfaces at distance L, both with safe speeds u, then
+        // the optimal v is: v = sqrt((u*L)/2)
+
+        // Additional speed zones may be nested with diminishing returns
+        
     }
 
     fn add_solid(&mut self, solid: Solid) {
@@ -420,48 +470,66 @@ impl Scene {
     fn add_light(&mut self, light: Solid) {
         self.lights.push(light);
     }
-    
+
+    fn speed_at(&self, pos: Multivector, fallback: Float) -> Float {
+
+        for (speed, s_box) in &self.speed_zones {
+            match pos.comps()[1..=3] {
+                [x, _, _] if !(s_box[0]..s_box[1]).contains(&x) => continue,
+                [_, y, _] if !(s_box[2]..s_box[3]).contains(&y) => continue,
+                [_, _, z] if !(s_box[4]..s_box[5]).contains(&z) => continue,
+                _ => return *speed
+            }
+        }
+        fallback
+    }
     
 
-    fn run(&mut self, time_step: Float, duration: Float, rays_per_sub_pixel: u8) {
+    fn run(&mut self, time_step: Float, duration: Float) {
         let now = Instant::now();          // Start of timed section
+        
         // Create rays
-        let mut rays: Vec<(&Pixel, Multivector, Multivector, Integer)> = Vec::new();
-        for pix in &self.camera.pixels {
+        let mut rays: Vec<Ray> = Vec::new();
+        for pixel in &self.camera.pixels {
             // Pixel grid
-            for (pos, vel) in std::iter::zip(&pix.ray_pos, &pix.ray_vel) {
+            for (pos, vel) in std::iter::zip(&pixel.ray_pos, &pixel.ray_vel) {
                 // Sub-pixel grid
-                for _ in 0..rays_per_sub_pixel {
-                    //
-                    rays.push((pix, pos.to_owned(), vel.to_owned(), 0));
-                }
+                
+                rays.push(Ray::new(pixel, pos.to_owned(), vel.to_owned(), self.camera.rays_per_pixel));
+                
             }
             
         }
-        let mut rays_to_remove = Vec::new();
+        let ray_total = rays.len();
         let num_of_steps = (duration/time_step) as usize;
+        let mut rays_to_remove = Vec::new();
 
         let elapsed_time = now.elapsed(); // End of timed section
-        println!("In {} seconds: {} rays produced.", elapsed_time.as_secs_f32(), rays.len());
+        println!("In {} seconds: {} rays produced.", elapsed_time.as_secs_f32(), ray_total);
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
-        // let mut t = 0.;
-        
-        for _ in tqdm!(0..num_of_steps) {
-            // Increase time
-            // t += time_step
+        for _ in tqdm!(0..num_of_steps) {   
 
             'ray_evolution: for i in 0..rays.len() {
-                // First test light hit
+                
+                // Check what speed is appropriate at current position
+                let speed = self.speed_at(rays[i].pos, time_step);
+
+
+                // Get next position
+                let mut next_pos = rays[i].pos + rays[i].vel.scaled(speed);
+
+
+                // Test for light hit
                 for light in &self.lights {
-                    if light.is_inside(rays[i].1) {
+                    if light.is_inside(rays[i].pos) {
 
-                        let diffuse_loss: Float = Float::from(0.9).powi(rays[i].3);
+                        let [red, green, blue] = rays[i].final_color(light);
 
-                        self.camera.image[rays[i].0.r as usize] += 40.*diffuse_loss;
-                        self.camera.image[rays[i].0.g as usize] += 20.*diffuse_loss;
-                        self.camera.image[rays[i].0.b as usize] += 160.*diffuse_loss;
+                        self.camera.image[rays[i].pixel.r as usize] += red;
+                        self.camera.image[rays[i].pixel.g as usize] += green;
+                        self.camera.image[rays[i].pixel.b as usize] += blue;
                         
                         // Mark for deletion
                         rays_to_remove.push(i);
@@ -470,32 +538,38 @@ impl Scene {
                         continue 'ray_evolution
                     }
                 }
-
                 
-                'reflections: {
-                    // Then test for diffuse surface hit
+                // Successful reflections modify next position before it is saved
+                '_reflections: {
+                    // Test for diffuse surface hit
                     for solid in &self.solids {
-                        if solid.is_inside(rays[i].1) {
-                            rays[i].2 = solid.refl_diffuse(rays[i].1);          // Reflect velocity
-                            rays[i].3 += 1;    // Add to reflection counter. Used for for calculating absorbtive loss
+                        
+                        if solid.is_inside(next_pos) {
 
-                            break 'reflections // Skip the other surfaces
+                            rays[i].color_absorption(solid);    // Absorbtive loss
+
+                            rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Reflect velocity
+                            next_pos = rays[i].pos + rays[i].vel.scaled(speed);
+
+                            // break '_reflections // Skip all other surfaces
                         }
                     }
-                    // Then test for mirror reflection
+                    // Test for mirror reflection
                     for mirror in &self.mirrors {
-                        if mirror.is_inside(rays[i].1) {
-                            rays[i].2 = mirror.refl(rays[i].1, rays[i].2);  // Reflect velocity
+                        if mirror.is_inside(rays[i].pos) {
+                            rays[i].color_absorption(mirror);    // Absorbtive loss
                             
-                            break 'reflections // Skip the other mirrors
+                            rays[i].vel = mirror.refl(rays[i].pos, rays[i].vel);  // Reflect velocity
+                            next_pos = rays[i].pos + rays[i].vel.scaled(speed);
+
+                            // break '_reflections // Skip the other mirrors
                         }
                     }
                 }
-                
 
                 // Lastly move forward
-                let vel = rays[i].2;
-                rays[i].1 += vel.scaled(time_step);
+                rays[i].pos = next_pos;
+
             }
 
             // Deletes all the rays that hit a light
@@ -508,7 +582,11 @@ impl Scene {
             
         }
         let elapsed_time = now.elapsed(); // End of timed section
-        println!("In {} seconds: ray transport simulated." , elapsed_time.as_secs_f32());
+        println!(
+            "\nIn {} seconds: ray transport simulated, {} rays unabsorbed ({}%).", 
+            elapsed_time.as_secs_f32(), rays.len(), (100*rays.len())/ray_total
+        );
+        
     }
 }
 
@@ -572,7 +650,7 @@ fn png_testing() {
 #[allow(dead_code)]
 fn screen_testing() {
     let mut camera = Camera::new([0., 0., 0.], [1., 0., 0.],
-        128, 128, 1e-2, 2
+        128, 128, 1e-2, 2, 1
     );
     let mut blue = 0.;
     for pix in &camera.pixels {
@@ -585,7 +663,7 @@ fn screen_testing() {
 
 #[allow(dead_code)]
 fn diffuse_testing() {
-    let rep = 4_000_000 ;
+    let rep = 40_000_000 ;
 
     let mut normal = Vec::new();
     for _ in 0..rep {
@@ -641,7 +719,7 @@ fn diffuse_testing() {
         
         
         // Get the velocity by rotating the normal and scaling it to unit length to set speed to 1
-        let _out = (normal[i].scaled(r.cos()) + normal[i]<<rot_plane).scaled(r.sin()).unit_vector();
+        let _out = (normal[i].scaled(r.cos()) + (normal[i]<<rot_plane).scaled(r.sin())).unit_vector();
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 2 took {} seconds." , elapsed_time.as_secs_f32());
@@ -657,11 +735,13 @@ fn diffuse_testing() {
         let theta = random::<Float>().asin();
         let vel1 = unit_normal.scaled(theta.cos()) + (unit_normal<<vertical_plane).scaled(theta.sin());
 
-        // Then rotate it by a random angle in the tangent plane of the surface
+        // Then rotate it by a random angle in the tangent plane of the surface.
         let horizontal_plane = unit_normal.complement();
         let phi = random::<Float>()*TAU;    // Horizontal rotation angle from unifrom distribution
         
-        let _out = vel1.scaled(phi.cos()) + (vel1<<horizontal_plane).scaled(phi.sin());
+        let c = Multivector::new_grade0(phi.cos());
+        let s = horizontal_plane.scaled(phi.sin());
+        let _out =  (c-s)*vel1*(c+s);
     }
     let elapsed_time = now.elapsed(); // End of timed section
     println!("Method 3 took {} seconds." , elapsed_time.as_secs_f32());
@@ -669,7 +749,7 @@ fn diffuse_testing() {
 
     let now = Instant::now();          // Start of timed section
     for i in 0..rep {
-        
+        // Currently broken because vel is not perpendicular to horizontal_plane. Needs the general rotation expression
         let mut vel =  normal[i].unit_vector();
         
         // Make a unit-vector with angle to the surface normal given by Lambert's cosine law
@@ -696,16 +776,16 @@ fn transport_testing() {
     let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  128;
     let pix_w = 3;
-    let rays_per_sub_pixel = 1;
+    
 
     
     let duration = 20.;
     let time_step = 0.2;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
     let mut scene = Scene::new(camera);
     
-    scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
+    // scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
     // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
 
 
@@ -715,7 +795,7 @@ fn transport_testing() {
     // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
-    scene.run(time_step, duration, rays_per_sub_pixel);
+    scene.run(time_step, duration);
 
     scene.camera.photo("transport_test");
 }
@@ -729,16 +809,15 @@ fn time_testing() {
     let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  128;
     let pix_w = 2;
-    let rays_per_sub_pixel = 1;
 
     
     let duration = 10.;
     let time_step = 0.5;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
     let mut scene = Scene::new(camera);
     
-    scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
+    // scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
 
     for _i in 0..10 {
         // scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
@@ -748,7 +827,7 @@ fn time_testing() {
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
 
-    scene.run(time_step, duration, rays_per_sub_pixel);
+    scene.run(time_step, duration);
 
     scene.camera.photo("time_test");
 }
@@ -762,24 +841,70 @@ fn scene_testing() {
     let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  128;
     let pix_w = 2;
-    let rays_per_sub_pixel = 1;
 
     
     let duration = 40.;
     let time_step = 0.1;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
     let mut scene = Scene::new(camera);
     
-    scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
+    // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
     
-    scene.add_solid(Solid::new_heart([3., 0., -0.1]));
-    scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
+    // scene.add_solid(Solid::new_heart([3., 0., -0.1]));
+    // scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
     // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
     
-    scene.run(time_step, duration, rays_per_sub_pixel);
+    scene.run(time_step, duration);
 
     scene.camera.photo("scene_test");
+}
+
+#[allow(dead_code)]
+fn color_testing() {
+    let focal_point = [-4., 0., 0.];
+    let screen_center = [-3., 0., 0.];
+
+    let pixel_size = 2e-3*4.;
+    let im_w = 720/4;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let im_h =  1280/4;
+    let pix_w = 6;
+
+    
+    let duration = 20.;
+    let time_step: Float= 0.01;
+
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
+    let mut scene = Scene::new(camera);
+    
+    
+    let free_speed: Float = ((4.-1.)*time_step/2.).sqrt();
+    
+    let red = [0xff, 0x80, 0x80];
+    let green = [0x80, 0xff, 0x80];
+    let blue = [0x40, 0x40, 0x90];
+
+
+    scene.add_solid(Solid::new_heart([0., 0., 0.], red));
+    scene.add_speed_zone(time_step, [
+        -0.7-free_speed,0.7+free_speed, -1.2-free_speed,1.2+free_speed, -1.-free_speed,1.3+free_speed
+    ]);
+    
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3]));
+    
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], green));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], blue));
+    scene.add_speed_zone(free_speed, [
+        -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
+    
+    
+    scene.run(time_step, duration);
+
+    scene.camera.photo("color_test");
 }
 
 #[allow(dead_code)]
@@ -790,26 +915,39 @@ fn vertical() {
     let pixel_size = 2e-3;
     let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  1280;
-    let pix_w = 2;
-    let rays_per_sub_pixel = 1;
+    let pix_w = 6;
+    
 
     
-    let duration = 60.;
-    let time_step = 0.05;
+    let duration = 20.;
+    let time_step = 0.01;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
+    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
     let mut scene = Scene::new(camera);
     
-    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5.,-5.,5.,0.,2.]));
-    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
-    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2.,-5.,5.,-5.,5.]));
-    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0.,-5.,5.,-5.,5.]));
-    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5.,-2.,0.,-5.,5.]));
-    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5.,0.,2.,-5.,5.]));
+    let radius: Float = 1.2;
+    let free_speed: Float = ((4.-radius)*time_step/2.).sqrt();
     
-    scene.add_mirror(Solid::new_sphere([0., 0., 0.], 1.));
     
-    scene.run(time_step, duration, rays_per_sub_pixel);
+    scene.add_mirror(Solid::new_sphere([0., 0., 0.], radius, [0xff;3]));
+    scene.add_speed_zone(time_step, [
+        -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed
+    ]);
+    
+    scene.add_speed_zone(free_speed, [
+        -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
+
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3]));
+    
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3]));
+
+    
+    scene.run(time_step, duration);
 
     scene.camera.photo("vertical");
 }
@@ -824,7 +962,10 @@ fn main() {
     // diffuse_testing();
     // transport_testing();
     // time_testing();
-    scene_testing();
+    // scene_testing();
+    color_testing();
+
+    
     // vertical();
 
     

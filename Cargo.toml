@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 counter = "0.5.7"
 image = "0.24.6"
+kdam = "0.4.0"
 png_encode_mini = "0.1.2"
 rand = "0.8.5"
 space_alg = { version = "0.1.0", path = "../space_alg" }

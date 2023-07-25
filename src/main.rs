@@ -1,16 +1,12 @@
-// use std::io;
+
 use std::{fmt, f32::consts::{PI, TAU}, time::Instant};
 use rand::random;
 
+use kdam::tqdm;
 use png_encode_mini;
 
 use space_alg::{Multivector, E_X, E_Y};
 
-// use std::io::Cursor;
-// use image::io::Reader as ImageReader;
-
-// use std::collections::HashMap;
-// use rand::Rng;
 
 
 // Types, Integer and Float should have the same number of bits
@@ -430,39 +426,45 @@ impl Scene {
     fn run(&mut self, time_step: Float, duration: Float, rays_per_sub_pixel: u8) {
         let now = Instant::now();          // Start of timed section
         // Create rays
-        let mut rays: Vec<(&Pixel, Multivector, Multivector)> = Vec::new();
+        let mut rays: Vec<(&Pixel, Multivector, Multivector, Integer)> = Vec::new();
         for pix in &self.camera.pixels {
             // Pixel grid
             for (pos, vel) in std::iter::zip(&pix.ray_pos, &pix.ray_vel) {
                 // Sub-pixel grid
                 for _ in 0..rays_per_sub_pixel {
                     //
-                    rays.push((pix, pos.to_owned(), vel.to_owned()));
+                    rays.push((pix, pos.to_owned(), vel.to_owned(), 0));
                 }
             }
             
         }
-        let mut absorbed = Vec::new();
+        let mut rays_to_remove = Vec::new();
+        let num_of_steps = (duration/time_step) as usize;
 
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: {} rays produced.", elapsed_time.as_secs_f32(), rays.len());
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
-        let mut t = 0.;
+        // let mut t = 0.;
+        
+        for _ in tqdm!(0..num_of_steps) {
+            // Increase time
+            // t += time_step
 
-        while t < duration  {
-            
             'ray_evolution: for i in 0..rays.len() {
                 // First test light hit
                 for light in &self.lights {
                     if light.is_inside(rays[i].1) {
-                        self.camera.image[rays[i].0.r as usize] += 3.;
-                        self.camera.image[rays[i].0.g as usize] += 1.5;
-                        self.camera.image[rays[i].0.b as usize] += 10.;
+
+                        let diffuse_loss: Float = Float::from(0.9).powi(rays[i].3);
+
+                        self.camera.image[rays[i].0.r as usize] += 40.*diffuse_loss;
+                        self.camera.image[rays[i].0.g as usize] += 20.*diffuse_loss;
+                        self.camera.image[rays[i].0.b as usize] += 160.*diffuse_loss;
                         
                         // Mark for deletion
-                        absorbed.push(i);
+                        rays_to_remove.push(i);
 
                         // Skip directly to next the ray
                         continue 'ray_evolution
@@ -474,15 +476,16 @@ impl Scene {
                     // Then test for diffuse surface hit
                     for solid in &self.solids {
                         if solid.is_inside(rays[i].1) {
-                            rays[i].2 = solid.refl_diffuse(rays[i].1);
-                            
-                            // break 'reflections // Skip the other surfaces
+                            rays[i].2 = solid.refl_diffuse(rays[i].1);          // Reflect velocity
+                            rays[i].3 += 1;    // Add to reflection counter. Used for for calculating absorbtive loss
+
+                            break 'reflections // Skip the other surfaces
                         }
                     }
                     // Then test for mirror reflection
                     for mirror in &self.mirrors {
                         if mirror.is_inside(rays[i].1) {
-                            rays[i].2 = mirror.refl(rays[i].1, rays[i].2);
+                            rays[i].2 = mirror.refl(rays[i].1, rays[i].2);  // Reflect velocity
                             
                             break 'reflections // Skip the other mirrors
                         }
@@ -496,16 +499,13 @@ impl Scene {
             }
 
             // Deletes all the rays that hit a light
-            absorbed.reverse();             //Iterate in reverse so hat swap_remove doesn't disturb itself
-            for i in &absorbed[..] {
+            rays_to_remove.reverse();         // Iterate in reverse so hat swap_remove doesn't disturb itself
+            for i in &rays_to_remove[..] {
                 // Removes in constant time: by replacing with the last element
                 rays.swap_remove(*i);
             }
-            absorbed.clear();
+            rays_to_remove.clear();
             
-
-            // Increase time
-            t += time_step
         }
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: ray transport simulated." , elapsed_time.as_secs_f32());
@@ -766,7 +766,7 @@ fn scene_testing() {
 
     
     let duration = 40.;
-    let time_step = 0.5;
+    let time_step = 0.1;
 
     let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
     let mut scene = Scene::new(camera);
@@ -790,11 +790,11 @@ fn vertical() {
     let pixel_size = 2e-3;
     let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
     let im_h =  1280;
-    let pix_w = 5;
+    let pix_w = 2;
     let rays_per_sub_pixel = 1;
 
     
-    let duration = 50.;
+    let duration = 60.;
     let time_step = 0.05;
 
     let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w);
@@ -824,8 +824,8 @@ fn main() {
     // diffuse_testing();
     // transport_testing();
     // time_testing();
-    // scene_testing();
-    vertical();
+    scene_testing();
+    // vertical();
 
     
 }

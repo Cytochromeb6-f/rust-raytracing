@@ -1,9 +1,11 @@
 
-use std::{fmt, f32::consts::{PI, TAU}, time::Instant};
+use std::{fmt, f32::consts::{PI, TAU}, time::Instant, io::Write};
 use rand::random;
 
 use kdam::tqdm;
 use png_encode_mini;
+use serde::{Serialize, Deserialize};
+use serde_json::Result;
 
 use space_alg::{Multivector, E_X, E_Y};
 
@@ -13,7 +15,7 @@ use space_alg::{Multivector, E_X, E_Y};
 type Float = f32;       // General float used in e.g. polynomial coefficients
 type Integer = i32;     // General integer used for exponents in the monomials
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 struct Monomial {
     p_x: Integer,
     p_y: Integer,
@@ -63,11 +65,10 @@ impl fmt::Display for Monomial {
 
 
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Serialize, Deserialize)]
 struct Polynomial {
     terms: Vec<(Float, Monomial)>
 }
-#[allow(dead_code)]
 impl Polynomial {
     fn new(terms: Vec<(Float, Monomial)>) -> Polynomial {
         let mut non_zero: Vec<(Float, Monomial)> = Vec::new();
@@ -149,7 +150,7 @@ impl fmt::Display for Polynomial {
         
 }
 
-// #[derive(Copy)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Solid {
     // A solid which has a surface given by the zero set of a polynomial. The interior is where the polynomial is negative.
     surface: Polynomial,
@@ -323,7 +324,7 @@ struct Ray<'a> {
     rays_per_pixel: Float
 }
 impl Ray<'_>{
-    fn new(pixel: &Pixel, pos: Multivector, vel: Multivector, rays_per_pixel: u8) -> Ray {
+    fn new(pixel: &Pixel, pos: Multivector, vel: Multivector, rays_per_pixel: u16) -> Ray {
         Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float)}
     }
     fn color_absorption(&mut self, solid: &Solid) {
@@ -344,16 +345,16 @@ impl Ray<'_>{
 #[allow(dead_code)]
 struct Camera {
     focal_point: Multivector,
+    screen_center: Multivector,
     im_w: u32,
     im_h: u32,
+    pix_w: u16,             // Sidelength of the square grid of ray sites from each pixel
     pixels: Vec<Pixel>,     // Array which holds the pixel objects
     image: Vec<Float>,      // The actual rgba-array
-    rays_per_pixel: u8
 }
-
 impl Camera {
-    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, 
-        pix_size: Float, pix_w: u8, rays_per_sub_pixel: u8
+    fn new(focal_point: Multivector, screen_center: Multivector, im_w: u32, im_h: u32, 
+        pix_size: Float, pix_w: u16
     ) -> Camera {
 
         let now = Instant::now();          // Start of timed section
@@ -361,8 +362,6 @@ impl Camera {
         let mut pixels: Vec<Pixel> = Vec::new();
         let mut image: Vec<Float> = Vec::new();
 
-        let focal_point: Multivector = Multivector::new_grade1(focal_point);
-        let screen_center: Multivector = Multivector::new_grade1(screen_center);
         let sub_pix_size = pix_size/(pix_w as Float);
         
         // Construct the screen geometry
@@ -375,7 +374,7 @@ impl Camera {
 
         
         // Populate the screen with pixels
-        let rays_per_pixel = pix_w.pow(2)*rays_per_sub_pixel;
+        
 
         for i in 0..im_h {
             let y_pix = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
@@ -397,10 +396,9 @@ impl Camera {
                         
                         let position = screen_center + e_w.scaled(x) + e_h.scaled(y);
                         
-                        for _ in 0..rays_per_sub_pixel {
-                            ray_pos.push(position);
-                            ray_vel.push((position - focal_point).unit_vector())
-                        }
+                        ray_pos.push(position);
+                        ray_vel.push((position - focal_point).unit_vector())
+                        
                     }
                 }
 
@@ -410,13 +408,13 @@ impl Camera {
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: camera with {} pixels created.", elapsed_time.as_secs_f32(), im_w*im_h);
         
-        Camera {focal_point, im_w, im_h, pixels, image, rays_per_pixel}
+        Camera {focal_point, screen_center, im_w, im_h, pix_w, pixels, image}
     }
 
-    fn photo(self, name: &str) -> () {
+    fn photo(self, file_name: &str) -> () {
         let now = Instant::now();          // Start of timed section
         
-        let mut f = std::fs::File::create(format!("{name}.png")).unwrap();
+        let mut f = std::fs::File::create(format!("{file_name}.png")).unwrap();
 
         let mut image_u8: Vec<u8> = Vec::new();
         for value in self.image {
@@ -427,25 +425,54 @@ impl Camera {
         let elapsed_time = now.elapsed(); // End of timed section
 
         match result {
-            Ok(_) => println!("In {} seconds: image written to \"{name}.png\".", elapsed_time.as_secs_f32()),
+            Ok(_) => println!("In {} seconds: image written to \"{file_name}.png\".", elapsed_time.as_secs_f32()),
             Err(e) => println!("Error {:?} after {} seconds.", e, elapsed_time.as_secs())
         }
 
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Scene {
+    focal_point: Multivector,
+    screen_center: Multivector,
+    im_w: u32,
+    im_h: u32,
+    pix_size: Float,
+    pix_w: u16,             // Sidelength of the square grid of ray sites from each pixel
     solids: Vec<Solid>,
     mirrors: Vec<Solid>,
     lights: Vec<Solid>,
     speed_zones: Vec<(Float, [Float; 6])>,  // The earliest will be used if two zones overlap
-    camera: Camera
 }
 impl Scene {
-    fn new(camera: Camera) -> Scene {
-        Scene {solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), speed_zones: Vec::new(), camera}
+    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, pix_size: Float, pix_w: u16) -> Scene {
+
+        let focal_point: Multivector = Multivector::new_grade1(focal_point);
+        let screen_center: Multivector = Multivector::new_grade1(screen_center);
+
+        Scene {
+            focal_point, screen_center, im_w, im_h, pix_size, pix_w, 
+            solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), speed_zones: Vec::new()
+        }
     }
 
+    fn new_from_json(path: &str) -> Scene {
+        
+        let data = std::fs::read_to_string(path).unwrap();
+
+        serde_json::from_str(&data).unwrap()
+    }
+
+    fn save_to_json(&self, file_name: &str) -> Result<()> {
+        let file = std::fs::File::create(format!("{file_name}.json")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        
+        serde_json::to_writer_pretty(&mut writer, self)?;
+        writer.flush().unwrap(); 
+
+        Ok(())
+    }
     fn add_speed_zone(&mut self, speed: Float, s_box: [Float; 6]) {
         self.speed_zones.push((speed, s_box));
 
@@ -485,17 +512,22 @@ impl Scene {
     }
     
 
-    fn run(&mut self, time_step: Float, duration: Float) {
+    fn run(&mut self, time_step: Float, duration: Float, file_name: &str) {
+
+        // Create camera
+        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size, self.pix_w)
+        ;
         let now = Instant::now();          // Start of timed section
         
         // Create rays
+        let rays_per_pixel = camera.pix_w.pow(2);
         let mut rays: Vec<Ray> = Vec::new();
-        for pixel in &self.camera.pixels {
+        for pixel in &camera.pixels {
             // Pixel grid
             for (pos, vel) in std::iter::zip(&pixel.ray_pos, &pixel.ray_vel) {
                 // Sub-pixel grid
                 
-                rays.push(Ray::new(pixel, pos.to_owned(), vel.to_owned(), self.camera.rays_per_pixel));
+                rays.push(Ray::new(pixel, pos.to_owned(), vel.to_owned(), rays_per_pixel));
                 
             }
             
@@ -527,9 +559,9 @@ impl Scene {
 
                         let [red, green, blue] = rays[i].final_color(light);
 
-                        self.camera.image[rays[i].pixel.r as usize] += red;
-                        self.camera.image[rays[i].pixel.g as usize] += green;
-                        self.camera.image[rays[i].pixel.b as usize] += blue;
+                        camera.image[rays[i].pixel.r as usize] += red;
+                        camera.image[rays[i].pixel.g as usize] += green;
+                        camera.image[rays[i].pixel.b as usize] += blue;
                         
                         // Mark for deletion
                         rays_to_remove.push(i);
@@ -586,7 +618,7 @@ impl Scene {
             "\nIn {} seconds: ray transport simulated, {} rays unabsorbed ({}%).", 
             elapsed_time.as_secs_f32(), rays.len(), (100*rays.len())/ray_total
         );
-        
+        camera.photo(file_name)
     }
 }
 
@@ -649,8 +681,11 @@ fn png_testing() {
 
 #[allow(dead_code)]
 fn screen_testing() {
-    let mut camera = Camera::new([0., 0., 0.], [1., 0., 0.],
-        128, 128, 1e-2, 2, 1
+    let focal_point = Multivector::new_grade1([0., 0., 0.]);
+    let screen_center = Multivector::new_grade1([1., 0., 0.]);
+
+    let mut camera = Camera::new(focal_point, screen_center,
+        128, 128, 1e-2, 2
     );
     let mut blue = 0.;
     for pix in &camera.pixels {
@@ -772,8 +807,8 @@ fn transport_testing() {
     let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
 
-    let pixel_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  128;
     let pix_w = 3;
     
@@ -782,8 +817,7 @@ fn transport_testing() {
     let duration = 20.;
     let time_step = 0.2;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
-    let mut scene = Scene::new(camera);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     // scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
     // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
@@ -795,9 +829,8 @@ fn transport_testing() {
     // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
-    scene.run(time_step, duration);
+    scene.run(time_step, duration, "transport_test");
 
-    scene.camera.photo("transport_test");
 }
 
 #[allow(dead_code)]
@@ -805,8 +838,8 @@ fn time_testing() {
     let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
 
-    let pixel_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  128;
     let pix_w = 2;
 
@@ -814,8 +847,8 @@ fn time_testing() {
     let duration = 10.;
     let time_step = 0.5;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
-    let mut scene = Scene::new(camera);
+   
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     // scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
 
@@ -827,9 +860,8 @@ fn time_testing() {
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
 
-    scene.run(time_step, duration);
+    scene.run(time_step, duration, "time_test");
 
-    scene.camera.photo("time_test");
 }
 
 #[allow(dead_code)]
@@ -837,8 +869,8 @@ fn scene_testing() {
     let focal_point = [-0.9, 0., 0.];
     let screen_center = [0., 0., 0.];
 
-    let pixel_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  128;
     let pix_w = 2;
 
@@ -846,8 +878,8 @@ fn scene_testing() {
     let duration = 40.;
     let time_step = 0.1;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
-    let mut scene = Scene::new(camera);
+    
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
     
@@ -855,9 +887,8 @@ fn scene_testing() {
     // scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
     // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
     
-    scene.run(time_step, duration);
+    scene.run(time_step, duration, "scene_test");
 
-    scene.camera.photo("scene_test");
 }
 
 #[allow(dead_code)]
@@ -865,8 +896,8 @@ fn color_testing() {
     let focal_point = [-4., 0., 0.];
     let screen_center = [-3., 0., 0.];
 
-    let pixel_size = 2e-3*4.;
-    let im_w = 720/4;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let pix_size = 2e-3*4.;
+    let im_w = 720/4;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  1280/4;
     let pix_w = 6;
 
@@ -874,8 +905,7 @@ fn color_testing() {
     let duration = 20.;
     let time_step: Float= 0.01;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
-    let mut scene = Scene::new(camera);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     
     let free_speed: Float = ((4.-1.)*time_step/2.).sqrt();
@@ -902,9 +932,8 @@ fn color_testing() {
     ]);
     
     
-    scene.run(time_step, duration);
+    scene.run(time_step, duration, "color_test");
 
-    scene.camera.photo("color_test");
 }
 
 #[allow(dead_code)]
@@ -912,8 +941,8 @@ fn vertical() {
     let focal_point = [-4., 0., 0.];
     let screen_center = [-3., 0., 0.];
 
-    let pixel_size = 2e-3;
-    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2*rays_per_sub_pixel rays
+    let pix_size = 2e-3;
+    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  1280;
     let pix_w = 6;
     
@@ -922,8 +951,7 @@ fn vertical() {
     let duration = 20.;
     let time_step = 0.01;
 
-    let camera = Camera::new(focal_point, screen_center, im_w, im_h, pixel_size, pix_w, 1);
-    let mut scene = Scene::new(camera);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     let radius: Float = 1.2;
     let free_speed: Float = ((4.-radius)*time_step/2.).sqrt();
@@ -947,9 +975,36 @@ fn vertical() {
     scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3]));
 
     
-    scene.run(time_step, duration);
+    scene.run(time_step, duration, "vertical");
 
-    scene.camera.photo("vertical");
+}
+
+fn json_testing() {
+
+    
+    let focal_point = [-4., 0., 0.];
+    let screen_center = [-3., 0., 0.];
+    let pix_size = 2e-3*8.;
+    let im_w = 720/8;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_h =  1280/8;
+    let pix_w = 6;
+    let duration = 20.;
+    let time_step = 0.01;
+    
+    let mut scene0 = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3]));
+    let json_str = serde_json::to_string(&scene0).unwrap();
+
+    let scene1: Scene = serde_json::from_str(json_str.as_str()).unwrap();
+    scene1.save_to_json("test").unwrap(); 
+
+    let mut scene2 = Scene::new_from_json("test.json");
+    scene2.run(time_step, duration, "json_test");
+    
+}
+
+fn menu_testing(){
+
 }
 
 fn main() {
@@ -963,8 +1018,9 @@ fn main() {
     // transport_testing();
     // time_testing();
     // scene_testing();
-    color_testing();
-
+    // color_testing();
+    // json_testing();
+    menu_testing();
     
     // vertical();
 

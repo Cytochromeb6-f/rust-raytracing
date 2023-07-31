@@ -157,19 +157,21 @@ struct Solid {
     gradient: [Polynomial; 3],
     origin: [Float; 3],
     b_box: [Float; 6],        // This is relative to the Solids own origin
-    color: [u8; 3]
+    color: [u8; 3],
+    gloss: Float,
 }
 
 #[allow(dead_code)]
 impl Solid {
-    fn new(surface: Polynomial, origin: [Float; 3], b_box: [Float; 6], color: [u8; 3]) -> Solid {
+    fn new(surface: Polynomial, origin: [Float; 3], b_box: [Float; 6], color: [u8; 3], gloss: Float) -> Solid {
+        // Gloss=0 always give diffuse reflection and gloss=1 always give specular reflection
         let gradient: [Polynomial; 3] = [surface.derivative('x'),
                                          surface.derivative('y'), 
                                          surface.derivative('z')];
-        Solid {surface, gradient, origin, b_box, color}
+        Solid {surface, gradient, origin, b_box, color, gloss}
     }
 
-    fn new_wall(point: [Float; 3], normal: [Float; 3], b_box: [Float; 6], color: [u8; 3]) -> Solid {
+    fn new_wall(point: [Float; 3], normal: [Float; 3], b_box: [Float; 6], color: [u8; 3], gloss: Float) -> Solid {
         // A half-space with a surface plane that is coincident with a given point and has a given normal direction
 
         let x1 = Monomial::new(1,0,0);
@@ -178,10 +180,10 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(normal[0], x1), (normal[1], y1), (normal[2], z1)]);
 
-        Solid::new(surface, point, b_box, color)
+        Solid::new(surface, point, b_box, color, gloss)
     }
 
-    fn new_sphere(center: [Float; 3], radius: Float, color: [u8; 3]) -> Solid {
+    fn new_sphere(center: [Float; 3], radius: Float, color: [u8; 3], gloss: Float) -> Solid {
         // A sphere with given a center and radius
 
         let b_box = [-radius, radius, -radius, radius, -radius, radius];
@@ -193,9 +195,27 @@ impl Solid {
 
         let surface = Polynomial::new(vec![(1., x2), (1., y2), (1., z2), (-radius.powi(2), c)]);
 
-        Solid::new(surface, center, b_box, color)
+        Solid::new(surface, center, b_box, color, gloss)
     }
-    fn new_heart(origin: [Float;3], color: [u8; 3]) -> Solid {
+
+     fn new_cube(center: [Float; 3], side: Float, color: [u8; 3], gloss: Float) -> Solid {
+        // A sphere with given a center and radius
+
+        let radius = side/2.;
+
+        let b_box = [-radius, radius, -radius, radius, -radius, radius];
+
+        let x2 = Monomial::new(8,0,0);
+        let y2 = Monomial::new(0,8,0);
+        let z2 = Monomial::new(0,0,8);
+        let c = Monomial::new(0,0,0);
+
+        let surface = Polynomial::new(vec![(1., x2), (1., y2), (1., z2), (-radius.powi(8), c)]);
+
+        Solid::new(surface, center, b_box, color, gloss)
+    }
+
+    fn new_heart(origin: [Float;3], color: [u8; 3], gloss: Float) -> Solid {
 
         let b_box = [-0.7, 0.7, -1.2, 1.2, -1., 1.3];
 
@@ -227,14 +247,8 @@ impl Solid {
             (3., y2z4), (-1., y2z3), (-6., y2z2), (3., y2), (11.3906, x6), (15.1875, x4z2), (-15.1875, x4), 
             (6.75, x2z4), (-0.1125, x2z3), (-13.5, x2z2), (6.75, x2), (1., z6), (-3., z4), (3., z2), (-1., c)
         ]);
-        
-        // let surface = Polynomial::new(vec![
-        //     (1., x6), (6.75, x4y2), (3., x4z2), (-3., x4), (15.1875, x2y4), (13.5, x2y2z2), (-13.5, x2y2), 
-        //     (3., x2z4), (-1., x2z3), (-6., x2z2), (3., x2), (11.3906, y6), (15.1875, y4z2), (-15.1875, y4), 
-        //     (6.75, y2z4), (-0.1125, y2z3), (-13.5, y2z2), (6.75, y2), (1., z6), (-3., z4), (3., z2), (-1., c)
-        // ]);
 
-        Solid::new(surface, origin, b_box, color)
+        Solid::new(surface, origin, b_box, color, gloss)
     }
     
     fn is_inside(&self, pos: Multivector) -> bool {
@@ -266,7 +280,7 @@ impl Solid {
     fn refl(&self, pos: Multivector, vel: Multivector) -> Multivector {
         let normal = self.gradient_at(pos);
 
-        -(normal*vel*normal).unit_vector()
+        (-normal*vel*normal).unit_vector()
     }
 
     fn refl_diffuse(&self, pos: Multivector) -> Multivector {    // Indepenent of incident velocity
@@ -289,15 +303,6 @@ impl Solid {
     }
 
 }
-// fn get_custom_solid() -> Vec<char> {
-//     let mut input_str: String = String::new();
-//     io::stdin()
-//         .read_line(&mut input_str)
-//         .expect("F");
-//     input_str.chars()
-//         .collect()
-// }
-
 
 
 #[derive(Clone)]
@@ -333,11 +338,11 @@ impl Ray<'_>{
         self.color[2] *= (solid.color[2] as Float)/256.;
         
     }
-    fn final_color(self, light_source: &Solid) -> [Float; 3] {
+    fn final_color(self, light_source: &Solid, brightness: &Float) -> [Float; 3] {
         [
-            self.color[0]*(light_source.color[0] as Float)/self.rays_per_pixel,
-            self.color[1]*(light_source.color[1] as Float)/self.rays_per_pixel,
-            self.color[2]*(light_source.color[2] as Float)/self.rays_per_pixel
+            brightness*self.color[0]*(light_source.color[0] as Float)/self.rays_per_pixel,
+            brightness*self.color[1]*(light_source.color[1] as Float)/self.rays_per_pixel,
+            brightness*self.color[2]*(light_source.color[2] as Float)/self.rays_per_pixel
         ]
     }
 }
@@ -440,9 +445,9 @@ struct Scene {
     im_h: u32,
     pix_size: Float,
     pix_w: u16,             // Sidelength of the square grid of ray sites from each pixel
+    lights: Vec<(Solid, Float)>,
     solids: Vec<Solid>,
-    mirrors: Vec<Solid>,
-    lights: Vec<Solid>,
+    objects: Vec<([Float; 6], Vec<Solid>)>,
     speed_zones: Vec<(Float, [Float; 6])>,  // The earliest will be used if two zones overlap
 }
 impl Scene {
@@ -453,7 +458,7 @@ impl Scene {
 
         Scene {
             focal_point, screen_center, im_w, im_h, pix_size, pix_w, 
-            solids: Vec::new(), mirrors: Vec::new(), lights: Vec::new(), speed_zones: Vec::new()
+            lights: Vec::new(), solids: Vec::new(), objects: Vec::new(), speed_zones: Vec::new()
         }
     }
 
@@ -488,14 +493,14 @@ impl Scene {
         
     }
 
+    fn add_light(&mut self, solid: Solid, brightness: Float) {
+        self.lights.push((solid, brightness));
+    }
     fn add_solid(&mut self, solid: Solid) {
         self.solids.push(solid);
     }
-    fn add_mirror(&mut self, mirror: Solid) {
-        self.mirrors.push(mirror);
-    }
-    fn add_light(&mut self, light: Solid) {
-        self.lights.push(light);
+    fn add_object(&mut self, object: ([Float; 6], Vec<Solid>)) {
+        self.objects.push(object);
     }
 
     fn speed_at(&self, pos: Multivector, fallback: Float) -> Float {
@@ -554,10 +559,10 @@ impl Scene {
 
 
                 // Test for light hit
-                for light in &self.lights {
-                    if light.is_inside(rays[i].pos) {
+                for (light_source, brightness) in &self.lights {
+                    if light_source.is_inside(rays[i].pos) {
 
-                        let [red, green, blue] = rays[i].final_color(light);
+                        let [red, green, blue] = rays[i].final_color(light_source, brightness);
 
                         camera.image[rays[i].pixel.r as usize] += red;
                         camera.image[rays[i].pixel.g as usize] += green;
@@ -571,34 +576,55 @@ impl Scene {
                     }
                 }
                 
-                // Successful reflections modify next position before it is saved
-                '_reflections: {
-                    // Test for diffuse surface hit
-                    for solid in &self.solids {
-                        
-                        if solid.is_inside(next_pos) {
-
-                            rays[i].color_absorption(solid);    // Absorbtive loss
-
-                            rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Reflect velocity
-                            next_pos = rays[i].pos + rays[i].vel.scaled(speed);
-
-                            // break '_reflections // Skip all other surfaces
-                        }
+                ///////// Messy, needs clean up
+                for (b_box, solids) in &self.objects {
+                    match next_pos.comps()[1..=3] {
+                        [x, _, _] if !(b_box[0]..b_box[1]).contains(&x) => continue,
+                        [_, y, _] if !(b_box[2]..b_box[3]).contains(&y) => continue,
+                        [_, _, z] if !(b_box[4]..b_box[5]).contains(&z) => continue,
+                        _ => ()
                     }
-                    // Test for mirror reflection
-                    for mirror in &self.mirrors {
-                        if mirror.is_inside(rays[i].pos) {
-                            rays[i].color_absorption(mirror);    // Absorbtive loss
+                    for solid in solids {
+                        if solid.is_inside(next_pos) {
                             
-                            rays[i].vel = mirror.refl(rays[i].pos, rays[i].vel);  // Reflect velocity
+                            rays[i].color_absorption(solid);    // Apply absorbtive loss
+                            
+                            if random::<Float>() < solid.gloss {
+                                rays[i].vel = solid.refl(rays[i].pos, rays[i].vel);     // Specular reflection
+                            } else {
+                                rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Diffuse reflection velocity
+                            }
+
+                            // Successful reflections modify next position before it is saved
                             next_pos = rays[i].pos + rays[i].vel.scaled(speed);
 
-                            // break '_reflections // Skip the other mirrors
+                            break // Skip all other solids in this object
                         }
                     }
                 }
 
+                // Test for surface hit
+                for solid in &self.solids {
+                    
+                    if solid.is_inside(next_pos) {
+                        
+                        rays[i].color_absorption(solid);    // Apply absorbtive loss
+                        
+                        if random::<Float>() < solid.gloss {
+                            rays[i].vel = solid.refl(rays[i].pos, rays[i].vel);     // Specular reflection
+                        } else {
+                            rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Diffuse reflection velocity
+                        }
+
+                        // Successful reflections modify next position before it is saved
+                        next_pos = rays[i].pos + rays[i].vel.scaled(speed);
+
+                        break // Skip all other solids
+                    }
+                }
+                
+                ///////////////////
+                
                 // Lastly move forward
                 rays[i].pos = next_pos;
 
@@ -616,7 +642,7 @@ impl Scene {
         let elapsed_time = now.elapsed(); // End of timed section
         println!(
             "\nIn {} seconds: ray transport simulated, {} rays unabsorbed ({}%).", 
-            elapsed_time.as_secs_f32(), rays.len(), (100*rays.len())/ray_total
+            elapsed_time.as_secs_f32(), rays.len(), (100.*(rays.len() as Float))/(ray_total as Float)
         );
         camera.photo(file_name)
     }
@@ -896,9 +922,9 @@ fn color_testing() {
     let focal_point = [-4., 0., 0.];
     let screen_center = [-3., 0., 0.];
 
-    let pix_size = 2e-3*4.;
-    let im_w = 720/4;                 // Number of rays created is im_w*im_h*pix_w^2 rays
-    let im_h =  1280/4;
+    let pix_size = 2e-3;
+    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_h =  1280;
     let pix_w = 6;
 
     
@@ -915,18 +941,18 @@ fn color_testing() {
     let blue = [0x40, 0x40, 0x90];
 
 
-    scene.add_solid(Solid::new_heart([0., 0., 0.], red));
+    scene.add_solid(Solid::new_heart([0., 0., 0.], red, 0.));
     scene.add_speed_zone(time_step, [
         -0.7-free_speed,0.7+free_speed, -1.2-free_speed,1.2+free_speed, -1.-free_speed,1.3+free_speed
     ]);
     
-    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3]));
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3], 0.), 1.);
     
-    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], green));
-    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], blue));
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], green, 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], blue, 0.));
     scene.add_speed_zone(free_speed, [
         -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
     ]);
@@ -957,7 +983,7 @@ fn vertical() {
     let free_speed: Float = ((4.-radius)*time_step/2.).sqrt();
     
     
-    scene.add_mirror(Solid::new_sphere([0., 0., 0.], radius, [0xff;3]));
+    scene.add_solid(Solid::new_sphere([0., 0., 0.], radius, [0xff;3], 1.));
     scene.add_speed_zone(time_step, [
         -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed
     ]);
@@ -966,19 +992,20 @@ fn vertical() {
         -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
     ]);
 
-    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3]));
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3], 0.), 1.);
     
-    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], [0xff; 3]));
-    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3]));
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3], 0.));
 
     
     scene.run(time_step, duration, "vertical");
 
 }
 
+#[allow(dead_code)]
 fn json_testing() {
 
     
@@ -992,7 +1019,7 @@ fn json_testing() {
     let time_step = 0.01;
     
     let mut scene0 = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
-    scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3]));
+    scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3], 0.), 1.);
     let json_str = serde_json::to_string(&scene0).unwrap();
 
     let scene1: Scene = serde_json::from_str(json_str.as_str()).unwrap();
@@ -1003,12 +1030,112 @@ fn json_testing() {
     
 }
 
-fn menu_testing(){
+fn rubikscube(){
 
+    let focal_point = [-3.5, 1.9, 1.6];
+    let screen_center = [-2.5, 1.2, 1.2];
+
+    let pix_size = 2e-3;
+    let im_w = 1280;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_h =  720;
+    let pix_w = 6;
+    
+    
+    
+    let duration = 20.;
+    let time_step = 0.05;
+
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    
+    
+    let side: Float = 0.6;
+    let free_speed: Float = ((4.-side*1.5)*time_step/2.).sqrt();
+    
+    let blue = [0x01, 0x69, 0xa8];
+    let green = [0x02, 0xbf, 0xa3];
+    let yellow = [0xfd, 0xd0, 0x28];
+    let white = [0xe8, 0xea, 0xe9];
+    let orange = [0xfd, 0x79, 0x26];
+    let red = [0xd3, 0x37, 0x38];
+    
+    let black = [0x27, 0x29, 0x28];
+    let l_grey = [0xaa; 3];
+    
+    let mut cube_object: ([f32; 6], Vec<Solid>) = ([-side*1.5,side*1.5, -side*1.5,side*1.5, -side*1.5,side*1.5], Vec::new());
+    for i in -1..=1 {
+        for j in -1..=1 {
+            for k in -1..=1 {
+                if i != 0 || j != 0 || k != 0 {             // Empty in the middle
+                    let x = (i as Float)*side; 
+                    let y = (j as Float)*side; 
+                    let z = (k as Float)*side;
+
+                    // Stickers
+                    if i==-1 {
+                        cube_object.1.push(Solid::new_wall([x-side/2., y, z], [-1.,0.,0.], 
+                            [0.,0.1, -side*0.4,side*0.4, -side*0.4,side*0.4], blue, 0.2));
+                    }
+                    if i==1 {
+                        cube_object.1.push(Solid::new_wall([x+side/2., y, z], [1.,0.,0.], 
+                            [-0.1,0., -side*0.4,side*0.4, -side*0.4,side*0.4], green, 0.2));
+                    }
+                    if j==-1 {
+                        cube_object.1.push(Solid::new_wall([x, y-side/2., z], [0.,-1.,0.], 
+                            [-side*0.4,side*0.4, 0.,0.1, -side*0.4,side*0.4], white, 0.2));
+                    }
+                    if j==1 {
+                        cube_object.1.push(Solid::new_wall([x, y+side/2., z], [0.,1.,0.], 
+                            [-side*0.4,side*0.4, -0.1,0., -side*0.4,side*0.4], yellow, 0.2));
+                    }
+                    if k==-1 {
+                        cube_object.1.push(Solid::new_wall([x, y, z-side/2.], [0.,0.,-1.], 
+                            [-side*0.4,side*0.4, -side*0.4,side*0.4, 0.,0.1], orange, 0.2));
+                    }
+                    if k==1 {
+                        cube_object.1.push(Solid::new_wall([x, y, z+side/2.], [0.,0.,1.], 
+                            [-side*0.4,side*0.4, -side*0.4,side*0.4, -0.1,0.], red, 0.2));
+                    }
+                    // Cube
+                    cube_object.1.push(Solid::new_cube([x, y, z], side, black, 0.9));
+                }
+            }
+        }
+    }
+    scene.add_object(cube_object);
+    scene.add_speed_zone(time_step, [
+        -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed
+    ]);
+    
+    scene.add_speed_zone(free_speed, [
+        -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
+    
+    scene.add_light(Solid::new_sphere([-4., -3., 4.], 2., [0x8f; 3], 1.), 5.);
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.],
+        l_grey, 0.), 2.);
+    
+    // Walls
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.],
+        l_grey, 0.));
+    
+    // Mirror
+    scene.add_solid(Solid::new_wall([3., -3., 0.], [-1., 1., 0.], [-1.,5., -5.,1., -5.,5.],
+        [0xf8; 3], 1.));
+
+
+    scene.run(time_step, duration, "rubikscube");
+    
 }
 
 fn main() {
-    
     
 
     // poly_testing();
@@ -1020,9 +1147,9 @@ fn main() {
     // scene_testing();
     // color_testing();
     // json_testing();
-    menu_testing();
     
     // vertical();
+    rubikscube();
 
     
 }

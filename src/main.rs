@@ -326,17 +326,31 @@ struct Ray<'a> {
     pos: Multivector,
     vel: Multivector,
     color: [Float; 3],
-    rays_per_pixel: Float
+    rays_per_pixel: Float,
+    is_diffuse: bool,                  // Speed up after first diffuse reflection
 }
 impl Ray<'_>{
     fn new(pixel: &Pixel, pos: Multivector, vel: Multivector, rays_per_pixel: u16) -> Ray {
-        Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float)}
+        Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float), is_diffuse: false}
     }
-    fn color_absorption(&mut self, solid: &Solid) {
+    fn interact(&mut self, solid: &Solid, local_speed: Float, diffuse_speed: Float) {
+
+        // Color absorption
         self.color[0] *= (solid.color[0] as Float)/256.;
         self.color[1] *= (solid.color[1] as Float)/256.;
         self.color[2] *= (solid.color[2] as Float)/256.;
-        
+           
+        if random::<Float>() < solid.gloss {
+            // Specular reflection
+            self.vel = solid.refl(self.pos, self.vel);   
+            self.pos += self.vel.scaled(local_speed);   
+        } else {
+            // Diffuse reflection
+            self.vel = solid.refl_diffuse(self.pos);
+            self.pos += self.vel.scaled(diffuse_speed);         
+            self.is_diffuse = true;                         // Speed up permanently after first diffuse reflection
+        }
+
     }
     fn final_color(self, light_source: &Solid, brightness: &Float) -> [Float; 3] {
         [
@@ -503,10 +517,13 @@ impl Scene {
         self.objects.push(object);
     }
 
-    fn speed_at(&self, pos: Multivector, fallback: Float) -> Float {
+    fn speed_at(&self, ray: Ray, diffuse_speed: Float, fallback: Float) -> Float {
 
+        if ray.is_diffuse {
+            return diffuse_speed
+        }
         for (speed, s_box) in &self.speed_zones {
-            match pos.comps()[1..=3] {
+            match ray.pos.comps()[1..=3] {
                 [x, _, _] if !(s_box[0]..s_box[1]).contains(&x) => continue,
                 [_, y, _] if !(s_box[2]..s_box[3]).contains(&y) => continue,
                 [_, _, z] if !(s_box[4]..s_box[5]).contains(&z) => continue,
@@ -517,11 +534,10 @@ impl Scene {
     }
     
 
-    fn run(&mut self, time_step: Float, duration: Float, file_name: &str) {
+    fn run(&mut self, n_steps: u32, precise_speed: Float, diffuse_speed: Float, file_name: &str) {
 
         // Create camera
-        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size, self.pix_w)
-        ;
+        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size, self.pix_w);
         let now = Instant::now();          // Start of timed section
         
         // Create rays
@@ -538,7 +554,6 @@ impl Scene {
             
         }
         let ray_total = rays.len();
-        let num_of_steps = (duration/time_step) as usize;
         let mut rays_to_remove = Vec::new();
 
         let elapsed_time = now.elapsed(); // End of timed section
@@ -546,16 +561,16 @@ impl Scene {
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
-        for _ in tqdm!(0..num_of_steps) {   
+        for _ in tqdm!(0..n_steps) {   
 
             'ray_evolution: for i in 0..rays.len() {
                 
                 // Check what speed is appropriate at current position
-                let speed = self.speed_at(rays[i].pos, time_step);
+                let local_speed = self.speed_at(rays[i], diffuse_speed, precise_speed);
 
 
                 // Get next position
-                let mut next_pos = rays[i].pos + rays[i].vel.scaled(speed);
+                let next_pos = rays[i].pos + rays[i].vel.scaled(local_speed);
 
 
                 // Test for light hit
@@ -576,7 +591,7 @@ impl Scene {
                     }
                 }
                 
-                ///////// Messy, needs clean up
+                // Test for object hit
                 for (b_box, solids) in &self.objects {
                     match next_pos.comps()[1..=3] {
                         [x, _, _] if !(b_box[0]..b_box[1]).contains(&x) => continue,
@@ -586,48 +601,22 @@ impl Scene {
                     }
                     for solid in solids {
                         if solid.is_inside(next_pos) {
-                            
-                            rays[i].color_absorption(solid);    // Apply absorbtive loss
-                            
-                            if random::<Float>() < solid.gloss {
-                                rays[i].vel = solid.refl(rays[i].pos, rays[i].vel);     // Specular reflection
-                            } else {
-                                rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Diffuse reflection velocity
-                            }
-
-                            // Successful reflections modify next position before it is saved
-                            next_pos = rays[i].pos + rays[i].vel.scaled(speed);
-
-                            break // Skip all other solids in this object
+                            rays[i].interact(solid, local_speed, diffuse_speed);
+                            continue 'ray_evolution         // Skip directly to next the ray
                         }
                     }
                 }
-
-                // Test for surface hit
+                // Test for free surface hit
                 for solid in &self.solids {
-                    
                     if solid.is_inside(next_pos) {
-                        
-                        rays[i].color_absorption(solid);    // Apply absorbtive loss
-                        
-                        if random::<Float>() < solid.gloss {
-                            rays[i].vel = solid.refl(rays[i].pos, rays[i].vel);     // Specular reflection
-                        } else {
-                            rays[i].vel = solid.refl_diffuse(rays[i].pos);          // Diffuse reflection velocity
-                        }
-
-                        // Successful reflections modify next position before it is saved
-                        next_pos = rays[i].pos + rays[i].vel.scaled(speed);
-
-                        break // Skip all other solids
+                        rays[i].interact(solid, local_speed, diffuse_speed);
+                        continue 'ray_evolution             // Skip directly to next the ray
                     }
                 }
                 
-                ///////////////////
                 
-                // Lastly move forward
+                // Move forward as planned if nothing is in the way
                 rays[i].pos = next_pos;
-
             }
 
             // Deletes all the rays that hit a light
@@ -840,8 +829,8 @@ fn transport_testing() {
     
 
     
-    let duration = 20.;
-    let time_step = 0.2;
+    let n_steps = 100;
+    let precise_speed = 0.2;
 
     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
@@ -855,7 +844,7 @@ fn transport_testing() {
     // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
-    scene.run(time_step, duration, "transport_test");
+    scene.run(n_steps, precise_speed, precise_speed, "transport_test");
 
 }
 
@@ -870,8 +859,8 @@ fn time_testing() {
     let pix_w = 2;
 
     
-    let duration = 10.;
-    let time_step = 0.5;
+    let n_steps = 20;
+    let precise_speed = 0.5;
 
    
     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
@@ -886,7 +875,7 @@ fn time_testing() {
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
 
-    scene.run(time_step, duration, "time_test");
+    scene.run(n_steps, precise_speed, precise_speed, "time_test");
 
 }
 
@@ -901,8 +890,8 @@ fn scene_testing() {
     let pix_w = 2;
 
     
-    let duration = 40.;
-    let time_step = 0.1;
+    let n_steps = 400;
+    let precise_speed = 0.1;
 
     
     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
@@ -913,7 +902,7 @@ fn scene_testing() {
     // scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
     // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
     
-    scene.run(time_step, duration, "scene_test");
+    scene.run(n_steps, precise_speed, precise_speed, "scene_test");
 
 }
 
@@ -928,13 +917,13 @@ fn color_testing() {
     let pix_w = 6;
 
     
-    let duration = 20.;
-    let time_step: Float= 0.01;
+    let n_steps = 2000;
+    let precise_speed: Float = 0.01;
 
     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     
-    let free_speed: Float = ((4.-1.)*time_step/2.).sqrt();
+    let free_speed: Float = ((4.-1.)*precise_speed/2.).sqrt();
     
     let red = [0xff, 0x80, 0x80];
     let green = [0x80, 0xff, 0x80];
@@ -942,7 +931,7 @@ fn color_testing() {
 
 
     scene.add_solid(Solid::new_heart([0., 0., 0.], red, 0.));
-    scene.add_speed_zone(time_step, [
+    scene.add_speed_zone(precise_speed, [
         -0.7-free_speed,0.7+free_speed, -1.2-free_speed,1.2+free_speed, -1.-free_speed,1.3+free_speed
     ]);
     
@@ -958,7 +947,7 @@ fn color_testing() {
     ]);
     
     
-    scene.run(time_step, duration, "color_test");
+    scene.run(n_steps, precise_speed, precise_speed, "color_test");
 
 }
 
@@ -974,17 +963,17 @@ fn vertical() {
     
 
     
-    let duration = 20.;
-    let time_step = 0.01;
+    let n_steps = 2000;
+    let precise_speed = 0.01;
 
     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     
     let radius: Float = 1.2;
-    let free_speed: Float = ((4.-radius)*time_step/2.).sqrt();
+    let free_speed: Float = ((4.-radius)*precise_speed/2.).sqrt();
     
     
     scene.add_solid(Solid::new_sphere([0., 0., 0.], radius, [0xff;3], 1.));
-    scene.add_speed_zone(time_step, [
+    scene.add_speed_zone(precise_speed, [
         -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed, -radius-free_speed,radius+free_speed
     ]);
     
@@ -1001,7 +990,7 @@ fn vertical() {
     scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3], 0.));
 
     
-    scene.run(time_step, duration, "vertical");
+    scene.run(n_steps, precise_speed, precise_speed, "vertical");
 
 }
 
@@ -1015,8 +1004,8 @@ fn json_testing() {
     let im_w = 720/8;                 // Number of rays created is im_w*im_h*pix_w^2 rays
     let im_h =  1280/8;
     let pix_w = 6;
-    let duration = 20.;
-    let time_step = 0.01;
+    let n_steps = 2000;
+    let precise_speed = 0.01;
     
     let mut scene0 = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
     scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3], 0.), 1.);
@@ -1026,31 +1015,29 @@ fn json_testing() {
     scene1.save_to_json("test").unwrap(); 
 
     let mut scene2 = Scene::new_from_json("test.json");
-    scene2.run(time_step, duration, "json_test");
+    scene2.run(n_steps, precise_speed, precise_speed, "json_test");
     
 }
 
 fn rubikscube(){
 
+    // Screen geometry
     let focal_point = [-3.5, 1.9, 1.6];
     let screen_center = [-2.5, 1.2, 1.2];
 
-    let pix_size = 2e-3;
-    let im_w = 1280;                 // Number of rays created is im_w*im_h*pix_w^2 rays
-    let im_h =  720;
-    let pix_w = 6;
+    let pix_size = 2e-3*2.;
+    let im_w = 1280/2;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_h =  720/2;
+    let pix_w = 1;
     
-    
-    
-    let duration = 20.;
-    let time_step = 0.05;
 
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    // Simulation parameters
+    let n_steps = 2000;
+    let precise_speed = 0.01;
+    let diffuse_speed = 0.5;
     
-    
-    let side: Float = 0.6;
-    let free_speed: Float = ((4.-side*1.5)*time_step/2.).sqrt();
-    
+
+    // Colors
     let blue = [0x01, 0x69, 0xa8];
     let green = [0x02, 0xbf, 0xa3];
     let yellow = [0xfd, 0xd0, 0x28];
@@ -1060,6 +1047,12 @@ fn rubikscube(){
     
     let black = [0x27, 0x29, 0x28];
     let l_grey = [0xaa; 3];
+    
+    
+    // Scene geometry 
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    
+    let side: Float = 0.6;
     
     let mut cube_object: ([f32; 6], Vec<Solid>) = ([-side*1.5,side*1.5, -side*1.5,side*1.5, -side*1.5,side*1.5], Vec::new());
     for i in -1..=1 {
@@ -1102,12 +1095,21 @@ fn rubikscube(){
         }
     }
     scene.add_object(cube_object);
-    scene.add_speed_zone(time_step, [
+
+    let free_speed: Float = ((4.-side*1.5)*precise_speed/2.).sqrt();
+    let mid_speed: Float = (free_speed*precise_speed).sqrt();
+
+    scene.add_speed_zone(precise_speed, [
+        -side*1.5-mid_speed,side*1.5+mid_speed, -side*1.5-mid_speed,side*1.5+mid_speed, -side*1.5-mid_speed,side*1.5+mid_speed
+    ]);
+    scene.add_speed_zone(mid_speed, [
         -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed
     ]);
-    
     scene.add_speed_zone(free_speed, [
         -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
+    scene.add_speed_zone(mid_speed, [
+        -4.+mid_speed,4.-mid_speed, -4.+mid_speed,4.-mid_speed, -4.+mid_speed,4.-mid_speed
     ]);
     
     scene.add_light(Solid::new_sphere([-4., -3., 4.], 2., [0x8f; 3], 1.), 5.);
@@ -1130,8 +1132,9 @@ fn rubikscube(){
     scene.add_solid(Solid::new_wall([3., -3., 0.], [-1., 1., 0.], [-1.,5., -5.,1., -5.,5.],
         [0xf8; 3], 1.));
 
+    
 
-    scene.run(time_step, duration, "rubikscube");
+    scene.run(n_steps, precise_speed, diffuse_speed, "rubikscube");
     
 }
 

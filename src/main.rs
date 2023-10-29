@@ -1,5 +1,5 @@
 
-use std::{fmt, f32::consts::{PI, TAU}, time::Instant, io::Write};
+use std::{fmt, env, thread, f32::consts::{PI, TAU}, time::Instant, io::Write};
 use rand::random;
 
 use kdam::tqdm;
@@ -307,15 +307,15 @@ impl Solid {
 
 #[derive(Clone)]
 struct Pixel {
-    ray_pos: Vec<Multivector>,
-    ray_vel: Vec<Multivector>,
-    r: u32,                     // Index of this pixels red-value in the image
-    g: u32,                     // etc.
-    b: u32
+    pos: Multivector,
+    ray_vel: Multivector,
+    r_idx: usize,                     // Index of this pixels red-value in the image
+    g_idx: usize,                     // etc.
+    b_idx: usize
 }
 impl Pixel {
-    fn new(ray_pos: Vec<Multivector>, ray_vel: Vec<Multivector>, r:u32, g:u32, b:u32) -> Pixel {
-        Pixel {ray_pos, ray_vel, r, g, b}
+    fn new(pos: Multivector, ray_vel: Multivector, r_idx: usize, g_idx: usize, b_idx: usize) -> Pixel {
+        Pixel {pos, ray_vel, r_idx, g_idx, b_idx}
     }
 }
 
@@ -327,61 +327,69 @@ struct Ray<'a> {
     vel: Multivector,
     color: [Float; 3],
     rays_per_pixel: Float,
-    is_diffuse: bool,                  // Speed up after first diffuse reflection
+    has_split: bool,
+    is_diffuse: bool,
 }
-impl Ray<'_>{
+impl Ray<'_> {
     fn new(pixel: &Pixel, pos: Multivector, vel: Multivector, rays_per_pixel: u16) -> Ray {
-        Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float), is_diffuse: false}
+        Ray {pixel, pos, vel, color: [1.; 3], rays_per_pixel: (rays_per_pixel as Float), has_split: false, is_diffuse: false}
     }
-    fn interact(&mut self, solid: &Solid, local_speed: Float, diffuse_speed: Float) {
+    fn interact(&mut self, solid: &Solid, local_speed: Float, diffuse_speed: Float) -> bool {
+        // Returns true if splitting happens
 
-        // Color absorption
-        self.color[0] *= (solid.color[0] as Float)/256.;
-        self.color[1] *= (solid.color[1] as Float)/256.;
-        self.color[2] *= (solid.color[2] as Float)/256.;
-           
-        if random::<Float>() < solid.gloss {
-            // Specular reflection
-            self.vel = solid.refl(self.pos, self.vel);   
-            self.pos += self.vel.scaled(local_speed);   
+        if self.has_split {
+
+            // Color absorption
+            self.color[0] *= (solid.color[0] as Float)/256.;
+            self.color[1] *= (solid.color[1] as Float)/256.;
+            self.color[2] *= (solid.color[2] as Float)/256.;
+            
+                if random::<Float>() < solid.gloss {
+                    // Specular reflection
+                    self.vel = solid.refl(self.pos, self.vel);   
+                    self.pos += self.vel.scaled(local_speed);   
+                } else {
+                    // Diffuse reflection
+                    self.vel = solid.refl_diffuse(self.pos);
+                    self.pos += self.vel.scaled(diffuse_speed);
+                    self.is_diffuse = true;
+                }
         } else {
-            // Diffuse reflection
-            self.vel = solid.refl_diffuse(self.pos);
-            self.pos += self.vel.scaled(diffuse_speed);         
-            self.is_diffuse = true;                         // Speed up permanently after first diffuse reflection
+            // Split into many less bright rays at first hit
+            self.color[0] /= self.rays_per_pixel;
+            self.color[1] /= self.rays_per_pixel;
+            self.color[2] /= self.rays_per_pixel;
+            
+            self.has_split = true;
+            return true
         }
-
+        false
     }
+
     fn final_color(self, light_source: &Solid, brightness: &Float) -> [Float; 3] {
         [
-            brightness*self.color[0]*(light_source.color[0] as Float)/self.rays_per_pixel,
-            brightness*self.color[1]*(light_source.color[1] as Float)/self.rays_per_pixel,
-            brightness*self.color[2]*(light_source.color[2] as Float)/self.rays_per_pixel
+            brightness*self.color[0]*(light_source.color[0] as Float),
+            brightness*self.color[1]*(light_source.color[1] as Float),
+            brightness*self.color[2]*(light_source.color[2] as Float)
         ]
     }
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 struct Camera {
     focal_point: Multivector,
     screen_center: Multivector,
     im_w: u32,
     im_h: u32,
-    pix_w: u16,             // Sidelength of the square grid of ray sites from each pixel
     pixels: Vec<Pixel>,     // Array which holds the pixel objects
     image: Vec<Float>,      // The actual rgba-array
 }
 impl Camera {
-    fn new(focal_point: Multivector, screen_center: Multivector, im_w: u32, im_h: u32, 
-        pix_size: Float, pix_w: u16
-    ) -> Camera {
+    fn new(focal_point: Multivector, screen_center: Multivector, im_w: u32, im_h: u32, pix_size: Float) -> Camera {
 
         let now = Instant::now();          // Start of timed section
 
-        let mut pixels: Vec<Pixel> = Vec::new();
-        let mut image: Vec<Float> = Vec::new();
-
-        let sub_pix_size = pix_size/(pix_w as Float);
         
         // Construct the screen geometry
         let camera_direction: Multivector = screen_center - focal_point;       // Vector in the direction of the camera
@@ -390,44 +398,33 @@ impl Camera {
         let e_w = vertical_plane.complement().unit_vector();      // Unit vector in the screens width-direction
         let horizontal_plane = e_w^camera_direction;              // Bivector plane
         let e_h = -horizontal_plane.complement().unit_vector();   // Unit vector in the screens height-direction
-
+        
         
         // Populate the screen with pixels
-        
-
+        let mut pixels: Vec<Pixel> = Vec::new();
         for i in 0..im_h {
-            let y_pix = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
+            let y = pix_size*((i as Float) - 0.5*(im_h-1) as Float);
             
             for j in 0..im_w {
-                let x_pix = pix_size*((j as Float) - 0.5*(im_w-1) as Float);
-
-                let r_index = 4*(im_w*i + j);   // Index of this pixels red-channel in the image
-                image.append(&mut vec![0., 0., 0., 255.]);          // Black non-transparent starting image
+                let x = pix_size*((j as Float) - 0.5*(im_w-1) as Float);
                 
-                let mut ray_pos = Vec::new();
-                let mut ray_vel = Vec::new();
-                // Populate the pixels with start sites for rays
-                for k in 0..pix_w {
-                    let y = y_pix + sub_pix_size*((k as Float) - 0.5*(pix_w-1) as Float);
-                    
-                    for l in 0..pix_w {     // Pixels are squares so pix_h==pix_w
-                        let x = x_pix + sub_pix_size*((l as Float) - 0.5*(pix_w-1) as Float);
-                        
-                        let position = screen_center + e_w.scaled(x) + e_h.scaled(y);
-                        
-                        ray_pos.push(position);
-                        ray_vel.push((position - focal_point).unit_vector())
-                        
-                    }
-                }
-
-                pixels.push(Pixel::new(ray_pos, ray_vel, r_index, r_index+1, r_index+2));
+                let r_index = 4*(im_w*i + j) as usize;   // Index of this pixels red-channel in the image
+                
+                
+                let pos = screen_center + e_w.scaled(x) + e_h.scaled(y);
+                let ray_vel = (pos - focal_point).unit_vector();
+                
+                pixels.push(Pixel::new(pos, ray_vel, r_index, r_index+1, r_index+2));
             }
         }
+        
+        // Make rgba screen vector (black non-transparent starting image)
+        let image: Vec<Float> = [0., 0., 0., 255.].repeat((im_w*im_h) as usize);
+        
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: camera with {} pixels created.", elapsed_time.as_secs_f32(), im_w*im_h);
         
-        Camera {focal_point, screen_center, im_w, im_h, pix_w, pixels, image}
+        Camera {focal_point, screen_center, im_w, im_h, pixels, image}
     }
 
     fn photo(self, file_name: &str) -> () {
@@ -451,27 +448,27 @@ impl Camera {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Scene {
     focal_point: Multivector,
     screen_center: Multivector,
     im_w: u32,
     im_h: u32,
     pix_size: Float,
-    pix_w: u16,             // Sidelength of the square grid of ray sites from each pixel
+    n_ray_clones: u16,                      // Number of clones created when each original ray first hits something
     lights: Vec<(Solid, Float)>,
     solids: Vec<Solid>,
     objects: Vec<([Float; 6], Vec<Solid>)>,
     speed_zones: Vec<(Float, [Float; 6])>,  // The earliest will be used if two zones overlap
 }
 impl Scene {
-    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, pix_size: Float, pix_w: u16) -> Scene {
+    fn new(focal_point: [Float; 3], screen_center: [Float; 3], im_w: u32, im_h: u32, pix_size: Float, n_ray_clones: u16) -> Scene {
 
         let focal_point: Multivector = Multivector::new_grade1(focal_point);
         let screen_center: Multivector = Multivector::new_grade1(screen_center);
 
         Scene {
-            focal_point, screen_center, im_w, im_h, pix_size, pix_w, 
+            focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 
             lights: Vec::new(), solids: Vec::new(), objects: Vec::new(), speed_zones: Vec::new()
         }
     }
@@ -492,6 +489,7 @@ impl Scene {
 
         Ok(())
     }
+
     fn add_speed_zone(&mut self, speed: Float, s_box: [Float; 6]) {
         self.speed_zones.push((speed, s_box));
 
@@ -517,13 +515,10 @@ impl Scene {
         self.objects.push(object);
     }
 
-    fn speed_at(&self, ray: Ray, diffuse_speed: Float, fallback: Float) -> Float {
+    fn speed_at(&self, pos: Multivector, fallback: Float) -> Float {
 
-        if ray.is_diffuse {
-            return diffuse_speed
-        }
         for (speed, s_box) in &self.speed_zones {
-            match ray.pos.comps()[1..=3] {
+            match pos.comps()[1..=3] {
                 [x, _, _] if !(s_box[0]..s_box[1]).contains(&x) => continue,
                 [_, y, _] if !(s_box[2]..s_box[3]).contains(&y) => continue,
                 [_, _, z] if !(s_box[4]..s_box[5]).contains(&z) => continue,
@@ -537,36 +532,38 @@ impl Scene {
     fn run(&mut self, n_steps: u32, precise_speed: Float, diffuse_speed: Float, file_name: &str) {
 
         // Create camera
-        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size, self.pix_w);
+        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size);
+
         let now = Instant::now();          // Start of timed section
-        
+
         // Create rays
-        let rays_per_pixel = camera.pix_w.pow(2);
+        let rays_per_pixel = self.n_ray_clones + 1;
         let mut rays: Vec<Ray> = Vec::new();
         for pixel in &camera.pixels {
             // Pixel grid
-            for (pos, vel) in std::iter::zip(&pixel.ray_pos, &pixel.ray_vel) {
-                // Sub-pixel grid
-                
-                rays.push(Ray::new(pixel, pos.to_owned(), vel.to_owned(), rays_per_pixel));
-                
-            }
+            rays.push(Ray::new(pixel, pixel.pos, pixel.ray_vel, rays_per_pixel));
+            
             
         }
         let ray_total = rays.len();
         let mut rays_to_remove = Vec::new();
+        let mut rays_to_add = Vec::new();
 
         let elapsed_time = now.elapsed(); // End of timed section
         println!("In {} seconds: {} rays produced.", elapsed_time.as_secs_f32(), ray_total);
 
         let now = Instant::now();          // Start of timed section
         // Simulate light transport
-        for _ in tqdm!(0..n_steps) {   
+        for _ in tqdm!(0..n_steps) {
 
-            'ray_evolution: for i in 0..rays.len() {
+            'ray_iterator: for i in 0..rays.len() {
                 
                 // Check what speed is appropriate at current position
-                let local_speed = self.speed_at(rays[i], diffuse_speed, precise_speed);
+                let local_speed = if rays[i].is_diffuse {
+                    diffuse_speed
+                } else {
+                    self.speed_at(rays[i].pos, precise_speed)
+                };
 
 
                 // Get next position
@@ -579,15 +576,15 @@ impl Scene {
 
                         let [red, green, blue] = rays[i].final_color(light_source, brightness);
 
-                        camera.image[rays[i].pixel.r as usize] += red;
-                        camera.image[rays[i].pixel.g as usize] += green;
-                        camera.image[rays[i].pixel.b as usize] += blue;
+                        camera.image[rays[i].pixel.r_idx] += red;
+                        camera.image[rays[i].pixel.g_idx] += green;
+                        camera.image[rays[i].pixel.b_idx] += blue;
                         
                         // Mark for deletion
                         rays_to_remove.push(i);
 
                         // Skip directly to next the ray
-                        continue 'ray_evolution
+                        continue 'ray_iterator
                     }
                 }
                 
@@ -601,16 +598,30 @@ impl Scene {
                     }
                     for solid in solids {
                         if solid.is_inside(next_pos) {
-                            rays[i].interact(solid, local_speed, diffuse_speed);
-                            continue 'ray_evolution         // Skip directly to next the ray
+                            if rays[i].interact(solid, local_speed, diffuse_speed) {
+                                for _ in 1..(rays[i].rays_per_pixel as usize) {
+                                    let mut clone = rays[i].clone();
+                                    clone.interact(solid, local_speed, diffuse_speed);
+                                    rays_to_add.push(clone);
+                                }
+                            }
+                                
+                            
+                            continue 'ray_iterator         // Skip directly to next the ray
                         }
                     }
                 }
                 // Test for free surface hit
                 for solid in &self.solids {
                     if solid.is_inside(next_pos) {
-                        rays[i].interact(solid, local_speed, diffuse_speed);
-                        continue 'ray_evolution             // Skip directly to next the ray
+                        if rays[i].interact(solid, local_speed, diffuse_speed) {
+                            for _ in 1..(rays[i].rays_per_pixel as usize) {
+                                let mut clone = rays[i].clone();
+                                clone.interact(solid, local_speed, diffuse_speed);
+                                rays_to_add.push(clone);
+                            }
+                        }
+                        continue 'ray_iterator             // Skip directly to next the ray
                     }
                 }
                 
@@ -626,6 +637,8 @@ impl Scene {
                 rays.swap_remove(*i);
             }
             rays_to_remove.clear();
+            rays.append(&mut rays_to_add);
+            
             
         }
         let elapsed_time = now.elapsed(); // End of timed section
@@ -633,6 +646,136 @@ impl Scene {
             "\nIn {} seconds: ray transport simulated, {} rays unabsorbed ({}%).", 
             elapsed_time.as_secs_f32(), rays.len(), (100.*(rays.len() as Float))/(ray_total as Float)
         );
+        camera.photo(file_name)
+    }
+
+
+    fn run_mt(&mut self, n_threads: usize, n_steps: u32, precise_speed: Float, diffuse_speed: Float, file_name: &str) {
+        // Multithreaded version
+
+        // Create camera
+        let mut camera = Camera::new(self.focal_point, self.screen_center, self.im_w, self.im_h, self.pix_size);
+
+        let now = Instant::now();          // Start of timed section
+
+        
+        
+        // Partition the screen and spawn threads
+        let mut pixel_shift = 0; 
+        let mut handles = Vec::new();
+        for k in 0..n_threads {
+            let me = self.clone();
+            let cc = camera.clone();
+            
+            let next_shift = (cc.pixels.len()*k/n_threads..cc.pixels.len()*(k+1)/n_threads).len();
+
+            handles.push(thread::spawn(move || {
+                // Get correct slice of camera.image and camera.pixels
+                let mut thread_img = cc.image[cc.image.len()*k/n_threads..cc.image.len()*(k+1)/n_threads].to_vec();
+                let mut thread_pixels = cc.pixels[cc.pixels.len()*k/n_threads..cc.pixels.len()*(k+1)/n_threads].to_vec();
+
+                for pix in &mut thread_pixels { // Ensures that the rays get linked to the correct pixel
+                    pix.r_idx -= 4*pixel_shift;
+                    pix.g_idx -= 4*pixel_shift;
+                    pix.b_idx -= 4*pixel_shift;
+                }
+
+                // Create rays
+                let rays_per_pixel = me.n_ray_clones + 1;
+                let mut thread_rays = Vec::new();
+                for pixel in &thread_pixels {
+                    thread_rays.push(Ray::new(pixel, pixel.pos, pixel.ray_vel, rays_per_pixel));
+                }
+                // Simulate light transport
+                let mut i = 0;
+                'ray_iterator: while i < thread_rays.len() {
+                    
+                    'time_iterator: for _ in 0..n_steps {
+                        
+                        // Check what speed is appropriate at current position
+                        let local_speed = if thread_rays[i].is_diffuse {
+                            diffuse_speed
+                        } else {
+                            me.speed_at(thread_rays[i].pos, precise_speed)
+                        };
+        
+        
+                        // Get next position
+                        let next_pos = thread_rays[i].pos + thread_rays[i].vel.scaled(local_speed);
+        
+        
+                        // Test for light hit
+                        for (light_source, brightness) in &me.lights {
+                            if light_source.is_inside(thread_rays[i].pos) {
+        
+                                let [red, green, blue] = thread_rays[i].final_color(light_source, brightness);
+        
+                                thread_img[thread_rays[i].pixel.r_idx] += red;
+                                thread_img[thread_rays[i].pixel.g_idx] += green;
+                                thread_img[thread_rays[i].pixel.b_idx] += blue;
+                                
+                                // Skip directly to next the ray
+                                i += 1;
+                                continue 'ray_iterator
+                            }
+                        }
+                        
+                        // Test for object hit
+                        for (b_box, solids) in &me.objects {
+                            match next_pos.comps()[1..=3] {
+                                [x, _, _] if !(b_box[0]..b_box[1]).contains(&x) => continue,
+                                [_, y, _] if !(b_box[2]..b_box[3]).contains(&y) => continue,
+                                [_, _, z] if !(b_box[4]..b_box[5]).contains(&z) => continue,
+                                _ => ()
+                            }
+                            for solid in solids {
+                                if solid.is_inside(next_pos) {
+                                    if thread_rays[i].interact(solid, local_speed, diffuse_speed) {
+                                        for _ in 1..(thread_rays[i].rays_per_pixel as usize) {
+                                            let mut clone = thread_rays[i].clone();
+                                            clone.interact(solid, local_speed, diffuse_speed);
+                                            thread_rays.push(clone);
+                                        }
+                                    }
+                                        
+                                    
+                                    continue 'time_iterator         // Skip to next timestep
+                                }
+                            }
+                        }
+                        // Test for free surface hit
+                        for solid in &me.solids {
+                            if solid.is_inside(next_pos) {
+                                if thread_rays[i].interact(solid, local_speed, diffuse_speed) {
+                                    for _ in 1..(thread_rays[i].rays_per_pixel as usize) {
+                                        let mut clone = thread_rays[i].clone();
+                                        clone.interact(solid, local_speed, diffuse_speed);
+                                        thread_rays.push(clone);
+                                    }
+                                }
+                                continue 'time_iterator         // Skip to next timestep
+                            }
+                        }
+                        
+                        // Move forward as planned if nothing is in the way
+                        thread_rays[i].pos = next_pos;
+                    }
+                    i += 1;
+                }
+                thread_img
+            }));
+            pixel_shift += next_shift;
+        }
+
+        // Recombine the image from the threads and save it to the camera
+        camera.image = handles.into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<Vec<f32>>>()
+            .concat();
+    
+
+        let elapsed_time = now.elapsed(); // End of timed section
+        println!("\nIn {} seconds: ray transport simulated.", elapsed_time.as_secs_f32());
         camera.photo(file_name)
     }
 }
@@ -699,12 +842,11 @@ fn screen_testing() {
     let focal_point = Multivector::new_grade1([0., 0., 0.]);
     let screen_center = Multivector::new_grade1([1., 0., 0.]);
 
-    let mut camera = Camera::new(focal_point, screen_center,
-        128, 128, 1e-2, 2
-    );
+    let mut camera = Camera::new(focal_point, screen_center, 128, 128, 1e-2);
+
     let mut blue = 0.;
     for pix in &camera.pixels {
-        camera.image[pix.b as usize] = blue;
+        camera.image[pix.b_idx] = blue;
         blue += 0.01;
     }
     camera.photo("screen_test")
@@ -823,16 +965,16 @@ fn transport_testing() {
     let screen_center = [0., 0., 0.];
 
     let pix_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
     let im_h =  128;
-    let pix_w = 3;
+    let n_ray_clones = 8;
     
 
     
     let n_steps = 100;
     let precise_speed = 0.2;
 
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     // scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
     // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
@@ -854,16 +996,16 @@ fn time_testing() {
     let screen_center = [0., 0., 0.];
 
     let pix_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
     let im_h =  128;
-    let pix_w = 2;
+    let n_ray_clones = 3;
 
     
     let n_steps = 20;
     let precise_speed = 0.5;
 
    
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     // scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
 
@@ -885,16 +1027,16 @@ fn scene_testing() {
     let screen_center = [0., 0., 0.];
 
     let pix_size = 5e-3;
-    let im_w = 256;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
     let im_h =  128;
-    let pix_w = 2;
+    let n_ray_clones = 3;
 
     
     let n_steps = 400;
     let precise_speed = 0.1;
 
     
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
     
@@ -912,15 +1054,15 @@ fn color_testing() {
     let screen_center = [-3., 0., 0.];
 
     let pix_size = 2e-3;
-    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2 rays
+    let im_w = 720;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
     let im_h =  1280;
-    let pix_w = 6;
+    let n_ray_clones = 35;
 
     
     let n_steps = 2000;
     let precise_speed: Float = 0.01;
 
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     
     let free_speed: Float = ((4.-1.)*precise_speed/2.).sqrt();
@@ -952,21 +1094,45 @@ fn color_testing() {
 }
 
 #[allow(dead_code)]
+fn json_testing() {
+
+    let focal_point = [-4., 0., 0.];
+    let screen_center = [-3., 0., 0.];
+    let pix_size = 2e-3*8.;
+    let im_w = 720/8;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  1280/8;
+    let n_ray_clones = 35;
+    let n_steps = 2000;
+    let precise_speed = 0.01;
+    
+    let mut scene0 = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
+    scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3], 0.), 1.);
+    let json_str = serde_json::to_string(&scene0).unwrap();
+
+    let scene1: Scene = serde_json::from_str(json_str.as_str()).unwrap();
+    scene1.save_to_json("test").unwrap(); 
+
+    let mut scene2 = Scene::new_from_json("test.json");
+    scene2.run(n_steps, precise_speed, precise_speed, "json_test");
+    
+}
+
+#[allow(dead_code)]
 fn vertical() {
     let focal_point = [-4., 0., 0.];
     let screen_center = [-3., 0., 0.];
 
-    let pix_size = 2e-3;
-    let im_w = 720;                 // Number of rays created is im_w*im_h*pix_w^2 rays
-    let im_h =  1280;
-    let pix_w = 6;
+    let pix_size = 2e-3*8.;
+    let im_w = 720/8;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  1280/8;
+    let n_ray_clones = 25;
     
 
     
     let n_steps = 2000;
     let precise_speed = 0.01;
 
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     let radius: Float = 1.2;
     let free_speed: Float = ((4.-radius)*precise_speed/2.).sqrt();
@@ -990,51 +1156,28 @@ fn vertical() {
     scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], [0xff; 3], 0.));
 
     
-    scene.run(n_steps, precise_speed, precise_speed, "vertical");
+    // scene.run(n_steps, precise_speed, precise_speed, "vertical");
+    scene.run_mt(10, n_steps, precise_speed, precise_speed, "vertical");
 
 }
 
 #[allow(dead_code)]
-fn json_testing() {
-
-    
-    let focal_point = [-4., 0., 0.];
-    let screen_center = [-3., 0., 0.];
-    let pix_size = 2e-3*8.;
-    let im_w = 720/8;                 // Number of rays created is im_w*im_h*pix_w^2 rays
-    let im_h =  1280/8;
-    let pix_w = 6;
-    let n_steps = 2000;
-    let precise_speed = 0.01;
-    
-    let mut scene0 = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
-    scene0.add_light(Solid::new_sphere([0., 0., 0.], 1.5, [0xff;3], 0.), 1.);
-    let json_str = serde_json::to_string(&scene0).unwrap();
-
-    let scene1: Scene = serde_json::from_str(json_str.as_str()).unwrap();
-    scene1.save_to_json("test").unwrap(); 
-
-    let mut scene2 = Scene::new_from_json("test.json");
-    scene2.run(n_steps, precise_speed, precise_speed, "json_test");
-    
-}
-
-fn rubikscube(){
+fn rubikscube() {
 
     // Screen geometry
     let focal_point = [-3.5, 1.9, 1.6];
     let screen_center = [-2.5, 1.2, 1.2];
 
-    let pix_size = 2e-3*2.;
-    let im_w = 1280/2;                 // Number of rays created is im_w*im_h*pix_w^2 rays
-    let im_h =  720/2;
-    let pix_w = 1;
+    let pix_size = 2e-3*1.;
+    let im_w = 1280/1;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  720/1;
+    let n_ray_clones = 25;
     
 
     // Simulation parameters
     let n_steps = 2000;
     let precise_speed = 0.01;
-    let diffuse_speed = 0.5;
+    let diffuse_speed = 1.0;
     
 
     // Colors
@@ -1050,7 +1193,7 @@ fn rubikscube(){
     
     
     // Scene geometry 
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, pix_w);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
     
     let side: Float = 0.6;
     
@@ -1134,12 +1277,81 @@ fn rubikscube(){
 
     
 
-    scene.run(n_steps, precise_speed, diffuse_speed, "rubikscube");
+    // scene.run(n_steps, precise_speed, diffuse_speed, "rubikscube");
+    scene.run_mt(8, n_steps, precise_speed, diffuse_speed, "rubikscube");
     
 }
 
-fn main() {
+#[allow(dead_code)]
+fn clock() {
+
+    // Screen geometry
+    let focal_point = [-1., 0.4, 0.];
+    let screen_center = [0., 0.5, 0.];
+
+    let pix_size = 2e-3*4.;
+    let im_w = 1280/4;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  720/4;
+    let n_ray_clones = 25;
     
+
+    // Simulation parameters
+    let n_steps = 2000;
+    let precise_speed = 0.01;
+    let diffuse_speed = 1.0;
+    
+
+    // Colors
+    // let blue = [0x01, 0x69, 0xa8];
+    // let green = [0x02, 0xbf, 0xa3];
+    // let yellow = [0xfd, 0xd0, 0x28];
+    // let white = [0xe8, 0xea, 0xe9];
+    // let red = [0xd3, 0x37, 0x38];
+    
+    let black = [0x27, 0x29, 0x28];
+    let orange = [0xfd, 0x79, 0x26];
+    let l_grey = [0xaa; 3];
+    
+    
+    // Scene geometry
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
+    
+    let radius: Float = 1.;
+    let width: Float = 0.1;
+    // Clock face
+    
+    let surface = Polynomial::new(vec![
+        (1., Monomial::new(0,2,0)), (1., Monomial::new(0,0,2)), (-radius.powi(2), Monomial::new(0,0,0))]
+    );
+    scene.add_solid(Solid::new(surface, [3.6, 0., 0.], [-width,width, -radius,radius, -radius,radius],
+         orange, 0.));
+    // scene.add_solid(Solid::new_sphere([4., 0., 0.], radius, black, 0.));
+
+
+    // Lights
+    scene.add_light(Solid::new_sphere([-4., -3., 4.], 2., [0x8f; 3], 1.), 5.);
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.],
+        l_grey, 0.), 2.);
+    
+    // Walls
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.],
+        l_grey, 0.));
+    
+
+    // scene.run(n_steps, precise_speed, diffuse_speed, "clock");
+    scene.run_mt(8, n_steps, precise_speed, diffuse_speed, "clock");
+    
+}
+fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
 
     // poly_testing();
     // png_testing();
@@ -1152,8 +1364,7 @@ fn main() {
     // json_testing();
     
     // vertical();
-    rubikscube();
-
+    // rubikscube();
     
-}
+    clock();
 

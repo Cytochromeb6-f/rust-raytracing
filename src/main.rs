@@ -199,7 +199,7 @@ impl Solid {
     }
 
      fn new_cube(center: [Float; 3], side: Float, color: [u8; 3], gloss: Float) -> Solid {
-        // A sphere with given a center and radius
+        // A superellipsoid with given a center and radius
 
         let radius = side/2.;
 
@@ -1350,6 +1350,130 @@ fn clock() {
     scene.run_mt(8, n_steps, precise_speed, diffuse_speed, "clock");
     
 }
+
+#[allow(dead_code)]
+fn hit_scan() {
+
+    let scale = 1;
+    
+    // Screen geometry
+    let focal_point = [-3.5, 1.9, 1.6];
+    let screen_center = [-2.5, 1.2, 1.2];
+
+    let pix_size = 2e-3*(scale as f32);
+    let im_w = 1280/scale;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  720/scale;
+    let n_ray_clones = 25;
+    
+
+    // Simulation parameters
+    let n_steps = 2000;
+    let precise_speed = 0.01;
+    let diffuse_speed = 1.0;
+    
+
+    // Colors
+    let blue = [0x01, 0x69, 0xa8];
+    let green = [0x02, 0xbf, 0xa3];
+    let yellow = [0xfd, 0xd0, 0x28];
+    let white = [0xe8, 0xea, 0xe9];
+    let orange = [0xfd, 0x79, 0x26];
+    let red = [0xd3, 0x37, 0x38];
+    
+    let black = [0x27, 0x29, 0x28];
+    let l_grey = [0xaa; 3];
+    
+    
+    // Scene geometry 
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones);
+    
+    let side: Float = 0.6;
+    
+    let mut cube_object: ([f32; 6], Vec<Solid>) = ([-side*1.5,side*1.5, -side*1.5,side*1.5, -side*1.5,side*1.5], Vec::new());
+    for i in -1..=1 {
+        for j in -1..=1 {
+            for k in -1..=1 {
+                if i != 0 || j != 0 || k != 0 {             // Empty in the middle
+                    let x = (i as Float)*side; 
+                    let y = (j as Float)*side; 
+                    let z = (k as Float)*side;
+
+                    // Stickers
+                    if i==-1 {
+                        cube_object.1.push(Solid::new_wall([x-side/2., y, z], [-1.,0.,0.], 
+                            [0.,0.1, -side*0.4,side*0.4, -side*0.4,side*0.4], blue, 0.2));
+                    }
+                    if i==1 {
+                        cube_object.1.push(Solid::new_wall([x+side/2., y, z], [1.,0.,0.], 
+                            [-0.1,0., -side*0.4,side*0.4, -side*0.4,side*0.4], green, 0.2));
+                    }
+                    if j==-1 {
+                        cube_object.1.push(Solid::new_wall([x, y-side/2., z], [0.,-1.,0.], 
+                            [-side*0.4,side*0.4, 0.,0.1, -side*0.4,side*0.4], white, 0.2));
+                    }
+                    if j==1 {
+                        cube_object.1.push(Solid::new_wall([x, y+side/2., z], [0.,1.,0.], 
+                            [-side*0.4,side*0.4, -0.1,0., -side*0.4,side*0.4], yellow, 0.2));
+                    }
+                    if k==-1 {
+                        cube_object.1.push(Solid::new_wall([x, y, z-side/2.], [0.,0.,-1.], 
+                            [-side*0.4,side*0.4, -side*0.4,side*0.4, 0.,0.1], orange, 0.2));
+                    }
+                    if k==1 {
+                        cube_object.1.push(Solid::new_wall([x, y, z+side/2.], [0.,0.,1.], 
+                            [-side*0.4,side*0.4, -side*0.4,side*0.4, -0.1,0.], red, 0.2));
+                    }
+                    // Cube
+                    cube_object.1.push(Solid::new_cube([x, y, z], side, black, 0.9));
+                }
+            }
+        }
+    }
+    scene.add_object(cube_object);
+
+    let free_speed: Float = ((4.-side*1.5)*precise_speed/2.).sqrt();
+    let mid_speed: Float = (free_speed*precise_speed).sqrt();
+
+    scene.add_speed_zone(precise_speed, [
+        -side*1.5-mid_speed,side*1.5+mid_speed, -side*1.5-mid_speed,side*1.5+mid_speed, -side*1.5-mid_speed,side*1.5+mid_speed
+    ]);
+    scene.add_speed_zone(mid_speed, [
+        -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed, -side*1.5-free_speed,side*1.5+free_speed
+    ]);
+    scene.add_speed_zone(free_speed, [
+        -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
+    scene.add_speed_zone(mid_speed, [
+        -4.+mid_speed,4.-mid_speed, -4.+mid_speed,4.-mid_speed, -4.+mid_speed,4.-mid_speed
+    ]);
+    
+    scene.add_light(Solid::new_sphere([-4., -3., 4.], 2., [0x8f; 3], 1.), 5.);
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.],
+        l_grey, 0.), 2.);
+    
+    // Walls
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.],
+        l_grey, 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.],
+        l_grey, 0.));
+    
+    // Mirror
+    scene.add_solid(Solid::new_wall([3., -3., 0.], [-1., 1., 0.], [-1.,5., -5.,1., -5.,5.],
+        [0xf8; 3], 1.));
+
+    
+
+    // scene.run(n_steps, precise_speed, diffuse_speed, "rubikscube");
+    scene.run_mt(8, n_steps, precise_speed, diffuse_speed, "hit_scan");
+    
+}
+
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
 
@@ -1366,5 +1490,8 @@ fn main() {
     // vertical();
     // rubikscube();
     
-    clock();
+    // clock();
 
+    hit_scan();
+
+}

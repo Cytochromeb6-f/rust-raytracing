@@ -992,138 +992,144 @@ fn diffuse_testing() {
 }
 
 #[allow(dead_code)]
-// fn transport_testing() {
-//     let focal_point = [-0.9, 0., 0.];
-//     let screen_center = [0., 0., 0.];
+fn transport_testing() {
+    let focal_point = [-0.9, 0., 0.];
+    let screen_center = [0., 0., 0.];
 
-//     let pix_size = 5e-3;
-//     let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
-//     let im_h =  128;
-//     let n_ray_clones = 8;
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  128;
+    let n_ray_clones = 8;
     
 
     
-//     let n_steps = 100;
-//     let precise_speed = 0.2;
+    let n_steps = 100;
+    let precise_speed = 0.2;
 
-//     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
     
-//     // scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
-//     // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
+    // scene.add_light(Solid::new_sphere([3., 1.2, 0.1], 1.0));
+    // scene.add_solid(Solid::new_wall([-1., 0., 0.], [1., 0., 0.]));
 
 
-//     // scene.add_solid(Solid::new_sphere([3., -1.2, 0.], 1.));
-//     // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.]));
-//     // scene.add_solid(Solid::new_wall([0., 0., 1.5], [0., 0., -1.]));
-//     // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
+    // scene.add_solid(Solid::new_sphere([3., -1.2, 0.], 1.));
+    // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.]));
+    // scene.add_solid(Solid::new_wall([0., 0., 1.5], [0., 0., -1.]));
+    // scene.add_solid(Solid::new_wall([6., 0., 0.], [-1., 0., 0.]));
     
     
-//     scene.run(n_steps, precise_speed, precise_speed, "transport_test");
+    scene.run_mt(8, n_steps, precise_speed, precise_speed, "transport_test");
 
-// }
+}
 
-// #[allow(dead_code)]
-// fn time_testing() {
-//     let focal_point = [-0.9, 0., 0.];
-//     let screen_center = [0., 0., 0.];
+#[allow(dead_code)]
+fn time_testing() {
+    let focal_point = [-0.9, 0., 0.];
+    let screen_center = [0., 0., 0.];
 
-//     let pix_size = 5e-3;
-//     let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
-//     let im_h =  128;
-//     let n_ray_clones = 3;
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  128;
+    let n_ray_clones = 3;
 
     
-//     let n_steps = 20;
-//     let precise_speed = 0.5;
+    let n_steps = 20;
+    let precise_speed = 0.5;
 
    
-//     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
     
-//     // scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
+    // scene.add_light(Solid::new_sphere([3., 0.,0.], 1.));
 
-//     for _i in 0..10 {
-//         // scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
-//         // scene.add_solid(Solid::new_sphere([-3.-(i as Float), 0.,0.], 1.))
-//         // scene.add_solid(Solid::new_heart([-3.-(i as Float), 0.,0.]))
-//     }
-//     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
-//     // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
+    for _i in 0..10 {
+        // scene.add_solid(Solid::new_wall([-1.-(i as Float), 0.,0.],[1., 0., 0.]));
+        // scene.add_solid(Solid::new_sphere([-3.-(i as Float), 0.,0.], 1.))
+        // scene.add_solid(Solid::new_heart([-3.-(i as Float), 0.,0.]))
+    }
+    // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
+    // scene.add_solid(Solid::new_wall([-1.-(2 as Float), 0.,0.],[1., 0., 0.]));
 
-//     scene.run(n_steps, precise_speed, precise_speed, "time_test");
+    scene.run_mt(8, n_steps, precise_speed, precise_speed, "time_test");
 
-// }
+}
 
-// #[allow(dead_code)]
-// fn scene_testing() {
-//     let focal_point = [-0.9, 0., 0.];
-//     let screen_center = [0., 0., 0.];
+#[allow(dead_code)]
+fn scene_testing() {
+    let focal_point = [-0.9, 0., 0.];
+    let screen_center = [0., 0., 0.];
 
-//     let pix_size = 5e-3;
-//     let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
-//     let im_h =  128;
-//     let n_ray_clones = 3;
-
-    
-//     let n_steps = 400;
-//     let precise_speed = 0.1;
+    let pix_size = 5e-3;
+    let im_w = 256;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  128;
+    let n_ray_clones = 3;
 
     
-//     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
-    
-//     // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
-    
-//     // scene.add_solid(Solid::new_heart([3., 0., -0.1]));
-//     // scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
-//     // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
-    
-//     scene.run(n_steps, precise_speed, precise_speed, "scene_test");
-
-// }
-
-// #[allow(dead_code)]
-// fn color_testing() {
-//     let focal_point = [-4., 0., 0.];
-//     let screen_center = [-3., 0., 0.];
-
-//     let pix_size = 2e-3;
-//     let im_w = 720;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
-//     let im_h =  1280;
-//     let n_ray_clones = 35;
+    let n_steps = 400;
+    let precise_speed = 0.1;
 
     
-//     let n_steps = 2000;
-//     let precise_speed: Float = 0.01;
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
+    
+    // scene.add_solid(Solid::new_wall([0., 0., -1.], [0., 0., 1.], [-5.,5.,-5.,5.,-2.,0.]));
+    
+    // scene.add_solid(Solid::new_heart([3., 0., -0.1]));
+    // scene.add_light(Solid::new_sphere([2., -1., 6.], 4.));
+    // scene.add_light(Solid::new_sphere([0., -6., 6.], 4.));
+    
+    scene.run_mt(8, n_steps, precise_speed, precise_speed, "scene_test");
 
-//     let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
+}
+
+#[allow(dead_code)]
+fn color_testing() {
+    let phi = PI*0.1;
+    let theta = PI*0.32;
+    let r1 = 4.3;
+    let r2 = 3.2;
+    let focal_point = [r1*phi.cos()*theta.sin(), r1*phi.sin()*theta.sin(), r1*theta.cos()];
+    let screen_center = [r2*phi.cos()*theta.sin(), r2*phi.sin()*theta.sin(), r2*theta.cos()];
+
+    let scale = 1;
+    let pix_size = 2e-3*(scale as Float);
+    let im_w = 1280/scale;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
+    let im_h =  1280/scale;
+    let n_ray_clones = 25;
+
+    
+    let n_steps = 2000;
+    let precise_speed: Float = 0.01;
+
+    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
     
     
-//     let free_speed: Float = ((4.-1.)*precise_speed/2.).sqrt();
+    let free_speed: Float = ((4.-1.)*precise_speed/2.).sqrt();
     
-//     let red = [0xff, 0x80, 0x80];
-//     let green = [0x80, 0xff, 0x80];
-//     let blue = [0x40, 0x40, 0x90];
+    let red = [0xff, 0x80, 0x80];
+    let green = [0x80, 0xff, 0x80];
+    let blue = [0x40, 0x40, 0x90];
+    let orange = [0xff, 0xa5, 0x00];
 
 
-//     scene.add_solid(Solid::new_heart([0., 0., 0.], red, 0.));
-//     scene.add_speed_zone(precise_speed, [
-//         -0.7-free_speed,0.7+free_speed, -1.2-free_speed,1.2+free_speed, -1.-free_speed,1.3+free_speed
-//     ]);
+    scene.add_solid(Solid::new_heart([0., 0., 0.], red, 0.));
+    scene.add_speed_zone(precise_speed, [
+        -0.7-free_speed,0.7+free_speed, -1.2-free_speed,1.2+free_speed, -1.-free_speed,1.3+free_speed
+    ]);
     
-//     scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3], 0.), 1.);
+    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.], [0xff; 3], 0.), 1.);
     
-//     scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3], 0.));
-//     scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], [0xff; 3], 0.));
-//     scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3], 0.));
-//     scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], green, 0.));
-//     scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], blue, 0.));
-//     scene.add_speed_zone(free_speed, [
-//         -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
-//     ]);
+    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.], [0xff; 3], 0.));
+    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.], orange, 0.));
+    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.], [0xff; 3], 0.4));
+    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.], green, 0.));
+    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.], blue, 0.));
+    scene.add_speed_zone(free_speed, [
+        -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed, -4.+free_speed,4.-free_speed
+    ]);
     
     
-//     scene.run(n_steps, precise_speed, precise_speed, "color_test");
+    scene.run_mt(8, n_steps, precise_speed, precise_speed, "color_test");
 
-// }
+}
 
 // #[allow(dead_code)]
 // fn json_testing() {
@@ -1200,18 +1206,18 @@ fn rubikscube() {
     let focal_point = [-3.5, 1.9, 1.6];
     let screen_center = [-2.5, 1.2, 1.2];
 
-    let scale = 4;
+    let scale = 8;
     let pix_size = 2e-3*(scale as Float);
     let im_w = 1280/scale;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
     let im_h =  720/scale;
-    let n_ray_clones = 1;
-    let site_s = 3;
+    let n_ray_clones = 25;
+    let site_s = 1;
     
 
     // Simulation parameters
     let n_steps = 2000;
     let precise_speed = 0.01;
-    let diffuse_speed = 1.0;
+    let diffuse_speed = precise_speed;// 1.0;
     
 
     // Colors
@@ -1316,74 +1322,7 @@ fn rubikscube() {
     
 }
 
-#[allow(dead_code)]
-fn clock() {
 
-    // Screen geometry
-    let focal_point = [-1., 0.4, 0.];
-    let screen_center = [0., 0.5, 0.];
-
-    let pix_size = 2e-3*4.;
-    let im_w = 1280/4;                 // Number of rays created is im_w*im_h*(1 + n_ray_clones) rays
-    let im_h =  720/4;
-    let n_ray_clones = 25;
-    
-
-    // Simulation parameters
-    let n_steps = 2000;
-    let precise_speed = 0.01;
-    let diffuse_speed = 1.0;
-    
-
-    // Colors
-    // let blue = [0x01, 0x69, 0xa8];
-    // let green = [0x02, 0xbf, 0xa3];
-    // let yellow = [0xfd, 0xd0, 0x28];
-    // let white = [0xe8, 0xea, 0xe9];
-    // let red = [0xd3, 0x37, 0x38];
-    
-    // let black = [0x27, 0x29, 0x28];
-    let orange = [0xfd, 0x79, 0x26];
-    let l_grey = [0xaa; 3];
-    
-    
-    // Scene geometry
-    let mut scene = Scene::new(focal_point, screen_center, im_w, im_h, pix_size, n_ray_clones, 1);
-    
-    let radius: Float = 1.;
-    let width: Float = 0.1;
-    // Clock face
-    
-    let surface = Polynomial::new(vec![
-        (1., Monomial::new(0,2,0)), (1., Monomial::new(0,0,2)), (-radius.powi(2), Monomial::new(0,0,0))]
-    );
-    scene.add_solid(Solid::new(surface, [3.6, 0., 0.], [-width,width, -radius,radius, -radius,radius],
-         orange, 0.));
-    // scene.add_solid(Solid::new_sphere([4., 0., 0.], radius, black, 0.));
-
-
-    // Lights
-    scene.add_light(Solid::new_sphere([-4., -3., 4.], 2., [0x8f; 3], 1.), 5.);
-    scene.add_light(Solid::new_wall([0., 0., 4.], [0., 0., -1.], [-5.,5., -5.,5., 0.,2.],
-        l_grey, 0.), 2.);
-    
-    // Walls
-    scene.add_solid(Solid::new_wall([0., 0., -4.], [0., 0., 1.], [-5.,5., -5.,5.,-2.,0.],
-        l_grey, 0.));
-    scene.add_solid(Solid::new_wall([4., 0., 0.], [-1., 0., 0.], [0.,2., -5.,5., -5.,5.],
-        l_grey, 0.));
-    scene.add_solid(Solid::new_wall([-4., 0., 0.], [1., 0., 0.], [-2.,0., -5.,5., -5.,5.],
-        l_grey, 0.));
-    scene.add_solid(Solid::new_wall([0., -4., 0.], [0., 1., 0.], [-5.,5., -2.,0., -5.,5.],
-        l_grey, 0.));
-    scene.add_solid(Solid::new_wall([0., 4., 0.], [0., -1., 0.], [-5.,5., 0.,2., -5.,5.],
-        l_grey, 0.));
-    
-
-    // scene.run(n_steps, precise_speed, diffuse_speed, "clock");
-    scene.run_mt(8, n_steps, precise_speed, diffuse_speed, "clock");
-    
-}
 
 
 fn main() {
@@ -1396,12 +1335,11 @@ fn main() {
     // transport_testing();
     // time_testing();
     // scene_testing();
-    // color_testing();
+    color_testing();
     // json_testing();
     
     // vertical();
-    rubikscube();
+    // rubikscube();
     
-    // clock();
 
 }
